@@ -85,7 +85,19 @@ correct just because they're the original:
    stale values from a previous loop iteration. Port the explicit branches;
    raise a clear error on an unmapped nominal value instead of silently
    reusing stale state.
-5. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+5. **`ParaRange.m`'s `isreal(IA_Nom)`/`isreal(V_Nom)` guards are dead-branch
+   bugs.** Each is written as `if isreal(X) ... else isnan(X); ... end`,
+   apparently intended to special-case NaN. But `isreal(nan)` is `True` in
+   MATLAB (NaN has no imaginary part), so the `isnan` branch is unreachable
+   — a NaN `IA_Nom`/`V_Nom` silently produces `NaN ± constant`, not
+   `±inf`. `Data_Finder_v3.m` already compensates for this itself,
+   re-checking `isnan(IA_Nom)`/`isnan(V_Nom)` right after calling
+   `ParaRange` and overwriting the bounds with `±inf`. The Python port
+   (`pacejka/ranges.py`) preserves the original NaN-in-NaN-out behavior for
+   golden-test fidelity — the *caller* (the future `segmenting.py` port of
+   `Data_Finder_v3.m`) must replicate the same compensating override, not
+   assume `para_range` already handles NaN.
+6. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted

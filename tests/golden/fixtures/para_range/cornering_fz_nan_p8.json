@@ -1,0 +1,22 @@
+{
+  "inputs": {
+    "fz_nom": NaN,
+    "p_nom": 8,
+    "ia_nom": 0,
+    "sa_nom": 0,
+    "v_nom": 25,
+    "test_type": "cornering"
+  },
+  "outputs": {
+    "fz_high": Infinity,
+    "fz_low": -Infinity,
+    "p_high": 8.99,
+    "p_low": 7,
+    "ia_high": 0.075,
+    "ia_low": -0.075,
+    "sa_high": 15,
+    "sa_low": -15,
+    "v_high": 27.5,
+    "v_low": 22.5
+  }
+}

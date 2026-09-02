@@ -1,0 +1,22 @@
+{
+  "inputs": {
+    "fz_nom": 150,
+    "p_nom": 12,
+    "ia_nom": 2,
+    "sa_nom": -3,
+    "v_nom": 25,
+    "test_type": "Cornering"
+  },
+  "outputs": {
+    "fz_high": 170,
+    "fz_low": 136,
+    "p_high": 12.99,
+    "p_low": 11.51,
+    "ia_high": 2.075,
+    "ia_low": 1.925,
+    "sa_high": 15,
+    "sa_low": -15,
+    "v_high": 27.5,
+    "v_low": 22.5
+  }
+}

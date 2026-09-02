@@ -1,0 +1,22 @@
+{
+  "inputs": {
+    "fz_nom": 50,
+    "p_nom": 14,
+    "ia_nom": 1,
+    "sa_nom": -6,
+    "v_nom": 25,
+    "test_type": "Braking"
+  },
+  "outputs": {
+    "fz_high": 65,
+    "fz_low": 35,
+    "p_high": 15,
+    "p_low": 13,
+    "ia_high": 1.075,
+    "ia_low": 0.925,
+    "sa_high": -5.9,
+    "sa_low": -6.1,
+    "v_high": 25.2,
+    "v_low": 24.8
+  }
+}
