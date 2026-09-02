@@ -21,9 +21,20 @@ teammates.
   fits, and saving/exporting results.
 - **Fitting stack**: numpy/pandas + `scipy.optimize` (`least_squares` /
   `curve_fit` in place of `lsqcurvefit`/`nlinfit`). Spline smoothing
-  (`fit(...,'smoothingspline',...)`) needs a scipy equivalent — likely
-  `scipy.interpolate.UnivariateSpline` or `splrep`/`splev`, tuned per use
-  site since MATLAB's `SmoothingParam` doesn't map 1:1 to scipy's `s`.
+  (`fit(...,'smoothingspline',...)`) uses `csaps`, not
+  `scipy.interpolate.UnivariateSpline`/`splrep` — MATLAB's smoothing spline
+  minimizes `p*sum((y-f(x))^2) + (1-p)*integral(f''(x)^2)` with `p` a 0-1
+  fidelity/curvature trade-off and every data point as a knot (the Reinsch
+  formulation); scipy's FITPACK-based splines instead choose a *reduced*
+  knot set to keep the residual sum under an absolute threshold `s`, in the
+  data's own units — the two parameters aren't interconvertible, and each
+  `Raw_Data_Fitter_*` file uses a different hand-tuned `SmoothingParam`
+  (0.99999999, 0.90, 0.1, 0.75, 0.9 across the four files), which matters
+  because the smoothed curve is what gets fit as Magic Formula `ydata`, so
+  under/over-smoothing shows up as a real shift in fitted `D_y`/`E_y`, not
+  just cosmetically. `csaps` implements the same Reinsch `p`-in-`[0,1]`
+  formulation MATLAB uses, so the existing `SmoothingParam` values transfer
+  directly instead of needing re-derivation per condition.
 - **No hardcoded absolute paths, anywhere.** The MATLAB code currently
   hardcodes `C:\OneDrive - The University of Alabama\...` and
   `"CC's tire model folder\Fitted Parameters\"` (see MIGRATION_PLAN.md for

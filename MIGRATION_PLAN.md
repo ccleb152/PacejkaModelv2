@@ -172,9 +172,12 @@ pacejka/                        # installable package — the ported model + I/O
     parameters.py                # read/write fitted-parameter tables
                                  # (pandas DataFrame in, DataFrame/CSV out —
                                  # one consistent naming scheme, see CLAUDE.md)
-  splines.py                    # shared smoothing-spline helpers (the scipy
-                                 # equivalent of MATLAB's `fit(...,
-                                 # 'smoothingspline', 'SmoothingParam', ...)`)
+  splines.py                    # shared smoothing-spline helpers, built on
+                                 # `csaps` (not scipy's UnivariateSpline/
+                                 # splrep) since csaps uses the same Reinsch
+                                 # p-in-[0,1] formulation as MATLAB's
+                                 # `fit(..., 'smoothingspline',
+                                 # 'SmoothingParam', p)` -- see CLAUDE.md
   fitters/
     __init__.py
     fy.py                       # Raw_Data_Fitter_Fy + Pacejka_Term_Finder_FY
