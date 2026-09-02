@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Local data-root config (per-user, points at the synced OneDrive/SharePoint
+# folder) -- never committed, see pacejka/config.py.
+.pacejka/
