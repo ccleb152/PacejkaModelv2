@@ -125,7 +125,29 @@ correct just because they're the original:
    deliberate design. `pacejka/segmenting.py`'s `segment_condition` checks
    the scalar value actually passed in for that call, which is what was
    clearly intended, rather than replicating the vector-wide check.
-7. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+7. **`Raw_Data_Fitter_Fy_V3.m` hardcodes `SweepVars.Fz = [50]`** (and
+   `IA=[0]`, `SA=[0]`, `P=[12]`, `V=[25]`) inside its own body, not as
+   parameters. Its caller, `Pacejka_Term_Finder_FY_V3.m`, takes an `Fz_nom`
+   argument and uses it to build a field name to look up in the result
+   (e.g. `SplineData.P12.SA0.IA0.FY_..._150FZ_12P_0IA`) — but
+   `Raw_Data_Fitter_Fy_V3` only ever *produces* the `_50FZ_` field, no
+   matter what `Fz_nom` was passed to the term finder. **In the current
+   MATLAB tool, the whole FY/MZ term-finder pipeline silently only ever
+   fits FZ=50 lbf**, regardless of what `Fz_nom` a user requests — any
+   other value would hit a "field not found" error, or (if some other
+   value happened to exist from a stale run) silently reuse the wrong
+   condition's data. This isn't a deliberate single-condition design; it's
+   a real limitation nobody appears to have hit yet, presumably because
+   nobody has tried fitting anything other than 50 lbf with this code. The
+   Python port (`pacejka/fitters/fy.py`'s `fit_alpha_sweep`) has no
+   equivalent to preserve: it fits whatever `DataFrame` it's handed (from
+   `pacejka.segmenting.segment_condition`), so which condition gets fit is
+   controlled entirely by what the caller segments beforehand, not by a
+   hardcoded sweep inside the fitting function. **Practical implication
+   for the team**: if any previously-fitted parameter set from this MATLAB
+   tool claims to be for a load other than 50 lbf, that claim should be
+   treated with suspicion until re-verified.
+8. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted

@@ -90,7 +90,7 @@ def test_nan_ia_nom_accepts_any_inclination_angle(samples):
     # ia_nom=NaN is meant to mean "don't filter on IA at all" (matching
     # FZ_Nom's existing NaN-means-unbounded behavior in para_range) -- see
     # the fixed whole-vector isnan bug documented in segment_condition's
-    # docstring and CLAUDE.md quirk #7.
+    # docstring and CLAUDE.md quirk #6.
     wide_ia_row = pd.DataFrame([_row(FZ=-150, IA=3.9)], index=["wide_ia"])
     combined = pd.concat([samples, wide_ia_row])
 
