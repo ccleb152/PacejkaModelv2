@@ -185,7 +185,22 @@ correct just because they're the original:
    for the team**: if any previously-fitted parameter set from this MATLAB
    tool claims to be for a load other than 50 lbf, that claim should be
    treated with suspicion until re-verified.
-8. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+8. **`Raw_Data_Fitter_Mz_V2.m` computes but never uses a return-sweep trim,
+   unlike its `Mx` sibling.** It computes `Index`/`Max1`/`Min2` (the same
+   "find where the SA triangle-wave trace turns around" logic
+   `Raw_Data_Fitter_Mx_V2.m` uses), but the actual lines that would remove
+   that portion of `SA_data`/`MZ_data` are commented out — so those
+   variables are dead code, and the SA→MZ spline fit uses the *entire*
+   sweep, both directions, while the equivalent SA→MX fit in the Mx
+   sibling file only uses one direction. There's no way to tell from the
+   source alone whether this is deliberate (MZ's fit is meant to capture
+   both sweep directions, e.g. hysteresis) or an oversight left over from
+   copying the Mx file. `pacejka/fitters/mz.py`'s `fit_aligning_moment`
+   preserves the original's actual (untrimmed) behavior and omits the dead
+   `Index`/`Max1`/`Min2` computation entirely — flagged here for the team
+   to confirm which behavior is actually intended before trusting existing
+   MZ fits' treatment of sweep direction.
+9. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted
