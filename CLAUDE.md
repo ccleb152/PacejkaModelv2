@@ -15,6 +15,43 @@ overturning moment) via nonlinear least squares. Must outlive the current
 maintainer's MATLAB license and remain usable by future, less MATLAB-fluent
 teammates.
 
+## Roadmap beyond Phase 1
+
+Two things the user has confirmed about where this is going, which change
+how the term-finder ports (`Pacejka_Term_Finder_FY_V3`/`MZ_V1_redo`, not
+yet ported) should be scoped when we get there:
+
+- **Multi-load sweeps are core, not optional.** A real test session
+  typically covers ~5 nominal loads (50-250 lbf). This is exactly what
+  quirk #7's `SweepVars.Fz = [50]` was meant to be hand-edited into (e.g.
+  `[50 100 150 200 250]`) each session in MATLAB — the pipeline was always
+  supposed to sweep every tested load, not fit one hardcoded value forever.
+  The Python orchestration layer should take the list of nominal loads
+  actually tested in a session — ideally auto-detected from the loaded
+  round's FZ channel rather than hand-typed, consistent with the
+  no-per-session-code-edits principle above — and run the segment/smooth/
+  fit pipeline once per load automatically, producing the per-load overlay
+  plots `tiremodelV2.m`'s plotting loop already does.
+- **The eventual goal is a real interpolating/predictive tire model for
+  lapsim integration (explicitly future work, not now).** The intended
+  mechanism for this is *not* a separate interpolation layer bolted on
+  top — it's fitting the Magic Formula's own load-dependence terms
+  (`D_y`/`E_y`/etc. as functions of `dFz`, e.g. `mu_y = Dy1 + Dy2*dfz`)
+  correctly, using data that spans the *full* set of tested loads at once.
+  Done right, the resulting closed-form equation in `model.py` already
+  interpolates (and extrapolates a bit) continuously across load — that's
+  what the `dFz` terms are *for*. `tiremodelV2.m`'s tail-end
+  `interp1`-between-independently-fit-per-load-curves section is a
+  workaround for the `dFz` stage never having been fit properly (itself
+  another symptom of the same hardcoding pattern —
+  `Pacejka_Term_Finder_FY_V3.m`'s own `dFz` stage also uses a hardcoded
+  single `Fz_vals = [50]` rather than the full spread) — the Python port
+  should fix the `dFz` fit itself rather than reproduce that workaround.
+  Practical implication for `model.py`: keep it stateless pure functions
+  of `(Fz, IA, alpha, coefficients) -> force`, importable independently of
+  Streamlit/pandas, since that's the interface a future lapsim integration
+  would actually call.
+
 ## Hard constraints
 
 - **Target**: Python 3, with a Streamlit UI for loading raw data, running
