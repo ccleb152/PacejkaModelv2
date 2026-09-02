@@ -21,9 +21,20 @@ teammates.
   fits, and saving/exporting results.
 - **Fitting stack**: numpy/pandas + `scipy.optimize` (`least_squares` /
   `curve_fit` in place of `lsqcurvefit`/`nlinfit`). Spline smoothing
-  (`fit(...,'smoothingspline',...)`) needs a scipy equivalent — likely
-  `scipy.interpolate.UnivariateSpline` or `splrep`/`splev`, tuned per use
-  site since MATLAB's `SmoothingParam` doesn't map 1:1 to scipy's `s`.
+  (`fit(...,'smoothingspline',...)`) uses `csaps`, not
+  `scipy.interpolate.UnivariateSpline`/`splrep` — MATLAB's smoothing spline
+  minimizes `p*sum((y-f(x))^2) + (1-p)*integral(f''(x)^2)` with `p` a 0-1
+  fidelity/curvature trade-off and every data point as a knot (the Reinsch
+  formulation); scipy's FITPACK-based splines instead choose a *reduced*
+  knot set to keep the residual sum under an absolute threshold `s`, in the
+  data's own units — the two parameters aren't interconvertible, and each
+  `Raw_Data_Fitter_*` file uses a different hand-tuned `SmoothingParam`
+  (0.99999999, 0.90, 0.1, 0.75, 0.9 across the four files), which matters
+  because the smoothed curve is what gets fit as Magic Formula `ydata`, so
+  under/over-smoothing shows up as a real shift in fitted `D_y`/`E_y`, not
+  just cosmetically. `csaps` implements the same Reinsch `p`-in-`[0,1]`
+  formulation MATLAB uses, so the existing `SmoothingParam` values transfer
+  directly instead of needing re-derivation per condition.
 - **No hardcoded absolute paths, anywhere.** The MATLAB code currently
   hardcodes `C:\OneDrive - The University of Alabama\...` and
   `"CC's tire model folder\Fitted Parameters\"` (see MIGRATION_PLAN.md for
@@ -97,7 +108,24 @@ correct just because they're the original:
    golden-test fidelity — the *caller* (the future `segmenting.py` port of
    `Data_Finder_v3.m`) must replicate the same compensating override, not
    assume `para_range` already handles NaN.
-6. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+6. **`Data_Finder_v3.m`'s own `isnan(IA_Nom)`/`isnan(V_Nom)` override checks
+   the whole sweep *vector*, not the current loop element.** It's written
+   as `if isnan(IA_Nom) ... end` where `IA_Nom` is the full sweep array
+   (e.g. `[0,1,2,3,4]`), not `IA_Nom(r)`. MATLAB's `if` on a non-scalar
+   array is only true when *every* element is nonzero, so this only fires
+   if the entire sweep is NaN — never for one NaN entry mixed with real
+   values. Combined with quirk #5 above, a NaN entry in a mixed sweep would
+   silently produce NaN (not `±inf`) bounds, which makes every `>=`/`<=`
+   comparison false and drops all data for that condition — the opposite
+   of the "NaN nominal means don't filter on this channel" behavior that's
+   clearly intended (and that `FZ_Nom` already gets, directly in
+   `ParaRange`). No sweep configuration used anywhere else in this repo
+   actually mixes a NaN entry into an otherwise-real IA_Nom/V_Nom sweep, so
+   this never changes behavior for real usage — but it's a real bug, not a
+   deliberate design. `pacejka/segmenting.py`'s `segment_condition` checks
+   the scalar value actually passed in for that call, which is what was
+   clearly intended, rather than replicating the vector-wide check.
+7. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted
@@ -123,3 +151,22 @@ correct just because they're the original:
   copies — this is a case where the Python port should *not* mirror
   MATLAB's structure, since the duplication there is a maintenance hazard,
   not a deliberate design choice.
+- **No per-condition file round-tripping.** `Data_Finder_v3.m` writes one
+  `.mat` file per nominal test condition to disk, and every
+  `Raw_Data_Fitter_*`/`Pacejka_Term_Finder_Data_Compiler_V1` function
+  re-loads those files by reconstructing the same filename from the same
+  nominal values via string concatenation. That's a side effect of MATLAB
+  scripts not being able to hand a struct back to a caller as easily as a
+  function can — it isn't part of the physics or the math. The Python port
+  (`pacejka/segmenting.py`'s `segment_condition`) returns an in-memory
+  `pandas.DataFrame` for one condition directly; downstream fitters should
+  consume that DataFrame directly rather than re-implementing MATLAB's
+  save/reload dance. Same deliberate-divergence principle as `model.py`
+  above — don't mirror accidental plumbing.
+- Golden tests need a genuine MATLAB run to compare against. Where that
+  isn't available in the working environment (no MATLAB access), a
+  function's tests are unit tests with independently hand-computed expected
+  values instead, clearly labeled as such (not silently presented as
+  "golden") — see `tests/unit/test_segmenting.py` for the pattern. Real TTC
+  data used to spot-check a port during development is never committed to
+  the repo (per the data-root constraint above) — synthetic fixtures only.
