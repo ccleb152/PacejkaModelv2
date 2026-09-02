@@ -33,7 +33,8 @@ yet ported) should be scoped when we get there:
   fit pipeline once per load automatically, producing the per-load overlay
   plots `tiremodelV2.m`'s plotting loop already does.
 - **The eventual goal is a real interpolating/predictive tire model for
-  lapsim integration (explicitly future work, not now).** The intended
+  lapsim integration (explicitly future work, not now). Decided: fit the
+  `dFz` terms properly; no fallback interpolation utility.** The
   mechanism for this is *not* a separate interpolation layer bolted on
   top — it's fitting the Magic Formula's own load-dependence terms
   (`D_y`/`E_y`/etc. as functions of `dFz`, e.g. `mu_y = Dy1 + Dy2*dfz`)
