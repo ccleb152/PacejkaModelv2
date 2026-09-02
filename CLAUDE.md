@@ -200,7 +200,65 @@ correct just because they're the original:
    `Index`/`Max1`/`Min2` computation entirely — flagged here for the team
    to confirm which behavior is actually intended before trusting existing
    MZ fits' treatment of sweep direction.
-9. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+9. **`Pacejka_Term_Finder_FY_V3.m`'s Base-stage `Ky1` bounds have the wrong
+   sign and exclude the initial guess entirely.** `p0.Ky1 = 175.5`, but the
+   fit bounds are `lbb(6)=-70, ubb(6)=-50` — both negative, nowhere near
+   175.5. `Ky1` scales `Ky_a` (the cornering-stiffness term inside `B_y`),
+   which needs to be positive for a physically sane tire (force opposing
+   slip angle in the linear region). MATLAB's `lsqcurvefit` doesn't error
+   on an infeasible `x0` — it silently clips it to the nearest bound — so
+   any historical run of this Base stage would have silently started (and
+   stayed, since it's bounded) at a negative `Ky1`, producing a
+   wrong-sign cornering stiffness in the fitted curve. There's no
+   plausible intentional reading of this; it reads as a typo (wrong sign,
+   or bounds copied from an unrelated coefficient). The Python port
+   (`pacejka/fitters/fy.py`) widens this to a permissive, explicitly
+   uncommitted `[0, 1000]` bracket that contains the initial guess with
+   the correct sign — flagged as needing real domain-informed re-tuning,
+   not a validated final choice. Any existing FY fit from this MATLAB
+   tool should be treated with the same suspicion as quirk #7's FZ=50
+   issue, for this independent reason.
+10. **`Pacejka_Term_Finder_FY_V3.m`'s `dFz` stage has a unit-conversion
+    bug.** The Base and `dIA` stages both convert the smoothed spline
+    `ydata` from lbf to N (`.*4.448`) before fitting; the `dFz` stage's
+    `ydata` (`SplineData...(FyVar)`, no `.*4.448`) does not, even though
+    its model still computes force in Newtons (`Fz_N = Fz_vals.*4.448`).
+    That's a ~4.448x mismatch between the model and its fitting target —
+    enough to badly distort the fitted load-sensitivity coefficients
+    (`Dy2`, `Ey2`, `Hsy2`, `Vsy2`). No plausible intentional reading here
+    either; the Python port applies the conversion consistently
+    (`sweep_point_from_alpha_sweep` always converts).
+11. **The `dIA` stage has the same hardcoded-single-value bug as quirk #7,
+    for camber instead of load.** `gamma_vals = [0]` is hardcoded at the
+    top of the file, so the "camber-sensitivity" fit runs on data recorded
+    *at zero camber*, with the model itself also evaluated at zero camber
+    throughout (`gamma_star = sin(gamma_vals*pi/180) = sin(0) = 0`
+    identically). Every term this stage is meant to fit (`Dy3`, `Ey4`,
+    `Ey5`, `Ky3`, `Ky5`, `Ky6`, `Vsy3`) multiplies `gamma_star` or
+    `gamma_star^2` somewhere in the full equation, so at `gamma_star=0`
+    none of them affect the objective function at all — the "fitted"
+    values are pure optimizer noise, not a real camber-sensitivity fit.
+    Same fix as quirk #7: `pacejka/fitters/fy.py`'s `fit_fy_coefficients`
+    takes a real `camber_sweep` spanning multiple tested camber angles.
+12. **The 5th stage (`dIA`x`dFz`, the load-camber cross term) is more
+    deeply broken than `dIA` alone, and is deferred rather than fixed.**
+    It's supposed to capture how camber-sensitivity itself changes with
+    load, which needs data recorded at combinations of nonzero camber
+    *and* non-nominal load simultaneously (e.g. IA=2° at Fz=100 lbf) — but
+    the original reuses the same single-load/single-camber `ydata` as
+    every other stage (`Fz_vals`/`gamma_vals`, both length-1), which can
+    never identify a genuine cross term regardless of what those two
+    values are hardcoded to. Fixing this properly needs real
+    multi-dimensional (Fz × IA) sweep data, which nothing in the current
+    pipeline collects (`Raw_Data_Fitter_Fy_V3`/`fit_alpha_sweep` only ever
+    handle one load/camber combination per call) — a bigger architectural
+    task than the load/camber fixes above. **Decided with the user**: the
+    Python port (`pacejka/fitters/fy.py`'s `fit_fy_coefficients`) leaves
+    the cross-term coefficients (`Ky7`, `Vsy4`) at `0.0` — not fit from
+    data that can't support it, and not carrying forward the original's
+    arbitrary, never-validated `p0.Ky7=2.0` guess either. Real cross-term
+    support is a follow-up task, not in scope now.
+13. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted
