@@ -65,7 +65,7 @@ def segment_condition(
     this channel" behavior that's evidently intended (and that FZ_Nom
     already gets, directly in `para_range`). This function checks the
     scalar `ia_nom`/`v_nom` actually passed in, which is what was clearly
-    intended. See CLAUDE.md quirk #7. This never changes behavior for any
+    intended. See CLAUDE.md quirk #6. This never changes behavior for any
     sweep configuration used elsewhere in this codebase, since none of them
     mix a NaN entry into an otherwise-real IA_Nom/SA_Nom/V_Nom sweep.
     """

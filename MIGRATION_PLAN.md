@@ -80,10 +80,19 @@ needed before anything else can be golden-tested meaningfully):
 6. `Raw_Data_Fitter_Mz_V2` — same spline-translation shape, for MZ.
 7. `Pacejka_Term_Finder_FY_V3` — depends on step 5 + `model.py`. This is the
    highest-value single port: it's the thing every other quantity's fit
-   depends on (by file, if not by call).
+   depends on (by file, if not by call). **Scope note (see CLAUDE.md
+   "Roadmap beyond Phase 1"):** the original's `dFz`-stage fit uses a
+   single hardcoded `Fz_vals = [50]` instead of the full spread of tested
+   loads, which is why `tiremodelV2.m` falls back to crudely `interp1`-ing
+   between independently-fit per-load curves instead of getting real
+   interpolation from the Magic Formula's own load-dependence terms. The
+   Python port's `dFz` stage should take data spanning all tested nominal
+   loads, not one hardcoded value, so the fitted `D_y`/`E_y`/etc. actually
+   interpolate across load the way they're designed to.
 8. `Pacejka_Term_Finder_MZ_V1_redo` — depends on step 6 + step 7's saved
    parameters (or, better, an in-memory call once both are Python objects
-   instead of round-tripping through `.mat`).
+   instead of round-tripping through `.mat`). Same `dFz`-stage scope note
+   as step 7 applies here too.
 9. `tiremodelV2` orchestration logic → becomes the Streamlit page flow
    (file selection, FX/FY dispatch, calling into steps 7–8, plotting).
 

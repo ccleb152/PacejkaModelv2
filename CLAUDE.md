@@ -15,6 +15,43 @@ overturning moment) via nonlinear least squares. Must outlive the current
 maintainer's MATLAB license and remain usable by future, less MATLAB-fluent
 teammates.
 
+## Roadmap beyond Phase 1
+
+Two things the user has confirmed about where this is going, which change
+how the term-finder ports (`Pacejka_Term_Finder_FY_V3`/`MZ_V1_redo`, not
+yet ported) should be scoped when we get there:
+
+- **Multi-load sweeps are core, not optional.** A real test session
+  typically covers ~5 nominal loads (50-250 lbf). This is exactly what
+  quirk #7's `SweepVars.Fz = [50]` was meant to be hand-edited into (e.g.
+  `[50 100 150 200 250]`) each session in MATLAB — the pipeline was always
+  supposed to sweep every tested load, not fit one hardcoded value forever.
+  The Python orchestration layer should take the list of nominal loads
+  actually tested in a session — ideally auto-detected from the loaded
+  round's FZ channel rather than hand-typed, consistent with the
+  no-per-session-code-edits principle above — and run the segment/smooth/
+  fit pipeline once per load automatically, producing the per-load overlay
+  plots `tiremodelV2.m`'s plotting loop already does.
+- **The eventual goal is a real interpolating/predictive tire model for
+  lapsim integration (explicitly future work, not now).** The intended
+  mechanism for this is *not* a separate interpolation layer bolted on
+  top — it's fitting the Magic Formula's own load-dependence terms
+  (`D_y`/`E_y`/etc. as functions of `dFz`, e.g. `mu_y = Dy1 + Dy2*dfz`)
+  correctly, using data that spans the *full* set of tested loads at once.
+  Done right, the resulting closed-form equation in `model.py` already
+  interpolates (and extrapolates a bit) continuously across load — that's
+  what the `dFz` terms are *for*. `tiremodelV2.m`'s tail-end
+  `interp1`-between-independently-fit-per-load-curves section is a
+  workaround for the `dFz` stage never having been fit properly (itself
+  another symptom of the same hardcoding pattern —
+  `Pacejka_Term_Finder_FY_V3.m`'s own `dFz` stage also uses a hardcoded
+  single `Fz_vals = [50]` rather than the full spread) — the Python port
+  should fix the `dFz` fit itself rather than reproduce that workaround.
+  Practical implication for `model.py`: keep it stateless pure functions
+  of `(Fz, IA, alpha, coefficients) -> force`, importable independently of
+  Streamlit/pandas, since that's the interface a future lapsim integration
+  would actually call.
+
 ## Hard constraints
 
 - **Target**: Python 3, with a Streamlit UI for loading raw data, running
@@ -125,7 +162,29 @@ correct just because they're the original:
    deliberate design. `pacejka/segmenting.py`'s `segment_condition` checks
    the scalar value actually passed in for that call, which is what was
    clearly intended, rather than replicating the vector-wide check.
-7. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+7. **`Raw_Data_Fitter_Fy_V3.m` hardcodes `SweepVars.Fz = [50]`** (and
+   `IA=[0]`, `SA=[0]`, `P=[12]`, `V=[25]`) inside its own body, not as
+   parameters. Its caller, `Pacejka_Term_Finder_FY_V3.m`, takes an `Fz_nom`
+   argument and uses it to build a field name to look up in the result
+   (e.g. `SplineData.P12.SA0.IA0.FY_..._150FZ_12P_0IA`) — but
+   `Raw_Data_Fitter_Fy_V3` only ever *produces* the `_50FZ_` field, no
+   matter what `Fz_nom` was passed to the term finder. **In the current
+   MATLAB tool, the whole FY/MZ term-finder pipeline silently only ever
+   fits FZ=50 lbf**, regardless of what `Fz_nom` a user requests — any
+   other value would hit a "field not found" error, or (if some other
+   value happened to exist from a stale run) silently reuse the wrong
+   condition's data. This isn't a deliberate single-condition design; it's
+   a real limitation nobody appears to have hit yet, presumably because
+   nobody has tried fitting anything other than 50 lbf with this code. The
+   Python port (`pacejka/fitters/fy.py`'s `fit_alpha_sweep`) has no
+   equivalent to preserve: it fits whatever `DataFrame` it's handed (from
+   `pacejka.segmenting.segment_condition`), so which condition gets fit is
+   controlled entirely by what the caller segments beforehand, not by a
+   hardcoded sweep inside the fitting function. **Practical implication
+   for the team**: if any previously-fitted parameter set from this MATLAB
+   tool claims to be for a load other than 50 lbf, that claim should be
+   treated with suspicion until re-verified.
+8. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted
