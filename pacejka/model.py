@@ -72,8 +72,41 @@ class FyCoefficients:
     Vsy4: float
 
 
-def fy_pure(fz, fz0_prime, gamma_star, alpha_star, coeffs: FyCoefficients, dpi=0.0):
-    """Pure-lateral-slip Magic Formula lateral force Fy0.
+@dataclass(frozen=True)
+class FyTerms:
+    """Every intermediate quantity from the pure-lateral-slip equation, not
+    just the final force -- `Pacejka_Term_Finder_MZ_V1_redo.m`'s aligning-
+    moment equation reuses `k_yalpha`/`cy`/`by`/`s_hy`/`s_vy` directly
+    (via its own `ParameterLoad`, a fourth near-duplicate of this same
+    equation in the MATLAB source), not just `fyo`. See `fy_terms`.
+    """
+
+    k_yalpha: np.ndarray
+    k_ygo: np.ndarray
+    s_hy: np.ndarray
+    alpha_y: np.ndarray
+    cy: float
+    mu_y: np.ndarray
+    dy: np.ndarray
+    ey: np.ndarray
+    by: np.ndarray
+    s_vy: np.ndarray
+    fyo: np.ndarray
+
+    @property
+    def s_hf(self):
+        """`S_Hf = S_Hy + S_Vy / (K_yalpha + epsilon_k)` -- the combined
+        horizontal shift `Pacejka_Term_Finder_MZ_V1_redo.m`'s `alpha_r`
+        uses (see `mz_pure`), distinct from the trail term's own `S_Ht`.
+        """
+        return self.s_hy + self.s_vy / (self.k_yalpha + _EPSILON_K)
+
+
+def fy_terms(fz, fz0_prime, gamma_star, alpha_star, coeffs: FyCoefficients, dpi=0.0) -> FyTerms:
+    """Pure-lateral-slip Magic Formula equation, returning every
+    intermediate quantity (see `FyTerms`) rather than just the final
+    force. `fy_pure` is a thin wrapper around this for the common case of
+    only wanting `(fyo, mu_y)`.
 
     Arguments mirror the MATLAB `Pacejka_FY` nested function exactly:
     `fz` is the actual normal load (N), `fz0_prime` the reference/nominal
@@ -89,11 +122,6 @@ def fy_pure(fz, fz0_prime, gamma_star, alpha_star, coeffs: FyCoefficients, dpi=0
     `coeffs.py1..py5`, so it's exposed as a real parameter here rather
     than hardcoding the current fitting pipeline's limitation into the
     shared math.
-
-    Returns `(fyo, mu_y)`, matching the original's two-output signature --
-    `mu_y` is returned separately because
-    `Pacejka_Term_Finder_MZ_V1_redo.m`'s aligning-moment equation needs it
-    directly, not just the final force.
 
     Verified against the term finder's own per-stage closures at their
     respective special cases: gamma_star=0 & fz=fz0_prime collapses to
@@ -127,4 +155,129 @@ def fy_pure(fz, fz0_prime, gamma_star, alpha_star, coeffs: FyCoefficients, dpi=0
     s_vy = fz * (p.Vsy1 + p.Vsy2 * dfz) + s_vy_gamma
 
     fyo = dy * np.sin(cy * np.arctan(by * alpha_y - ey * (by * alpha_y - np.arctan(by * alpha_y)))) + s_vy
-    return fyo, mu_y
+
+    return FyTerms(
+        k_yalpha=k_yalpha, k_ygo=k_ygo, s_hy=s_hy, alpha_y=alpha_y, cy=cy, mu_y=mu_y,
+        dy=dy, ey=ey, by=by, s_vy=s_vy, fyo=fyo,
+    )
+
+
+def fy_pure(fz, fz0_prime, gamma_star, alpha_star, coeffs: FyCoefficients, dpi=0.0):
+    """Pure-lateral-slip Magic Formula lateral force Fy0.
+
+    Returns `(fyo, mu_y)`, matching the original `Pacejka_FY`'s two-output
+    signature -- `mu_y` is returned separately because
+    `Pacejka_Term_Finder_MZ_V1_redo.m`'s aligning-moment equation needs it
+    directly, not just the final force. See `fy_terms` for every other
+    intermediate quantity that equation also needs.
+    """
+    terms = fy_terms(fz, fz0_prime, gamma_star, alpha_star, coeffs, dpi)
+    return terms.fyo, terms.mu_y
+
+
+@dataclass(frozen=True)
+class MzCoefficients:
+    """Fitted Magic Formula aligning-moment coefficients.
+
+    Field names match the MATLAB `q0`/`ParameterList` `Variable` strings,
+    with one deliberate exception: MATLAB names the 10th `Bz` coefficient
+    `Bz1o` (letter O, not the digit 0) -- a typo, not a versioning
+    convention. Named `Bz10` here, matching the standard MF-Tire naming it
+    was clearly supposed to follow; nothing else changes.
+
+    `Ez2` is used inside the *residual-moment magnitude* term (`Dr`), not
+    anywhere in the trail-curvature term (`Et`) its name would suggest --
+    a real oddity in the source's naming, not a Python-port choice, kept
+    as-is for fidelity to the original parameter table. See CLAUDE.md.
+
+    `Hz4`, `Dz9`, `Dz11` (the load-camber cross term) are never fit --
+    same rationale as `FyCoefficients`' unfit `Ky7`/`Vsy4`, see
+    `MzFitResult` in `pacejka.fitters.mz`.
+    """
+
+    Hz1: float
+    Hz2: float
+    Hz3: float
+    Hz4: float
+    Bz1: float
+    Bz2: float
+    Bz3: float
+    Bz4: float
+    Bz5: float
+    Bz9: float
+    Bz10: float
+    Cz1: float
+    Dz1: float
+    Dz2: float
+    Dz3: float
+    Dz4: float
+    Dz6: float
+    Dz7: float
+    Dz8: float
+    Dz9: float
+    Dz10: float
+    Dz11: float
+    Ez1: float
+    Ez2: float
+    Ez3: float
+    Ez4: float
+    Ez5: float
+
+
+def mz_pure(fz, fz0_prime, ro, gamma_star, alpha_star, cos_alpha_p, fy_cy, fy_by, s_hf, fy_og0, coeffs: MzCoefficients):
+    """Magic Formula aligning moment Mz0 (MF-Tire 6.1).
+
+    `fz`/`fz0_prime`/`gamma_star`/`alpha_star` mean the same as in
+    `fy_pure`. `ro` is the tire's (loaded) radius (m). `cos_alpha_p` is a
+    numerically-regularized `cos(alpha)` (matches the original's
+    `Vcx/(Vcx/cos(Alpha) + 0.1)` exactly, not simplified to `cos(alpha)`,
+    since the two aren't quite equal). `fy_cy`, `fy_by`, `s_hf`, `fy_og0`
+    come from the already-fit FY coefficients via `fy_terms` -- `fy_cy`,
+    `fy_by`, and `s_hf` (that call's own `.s_hf` property) at this call's
+    actual `gamma_star`, and `fy_og0` as the *separate* `fyo` from
+    `fy_terms` called with `gamma_star=0`
+    (the standard MF-Tire aligning-moment equation always uses the
+    zero-camber lateral force for the trail term, regardless of the
+    actual camber -- this is standard theory, not a bug).
+
+    Fixes a real bug relative to the standard MF-Tire 6.1 formulation
+    (which this file's MATLAB header cites): the residual-moment term
+    should use `alpha_r = alpha_star + s_hf`, a *different* shifted slip
+    angle than the trail term's `alpha_t = alpha_star + S_Ht`. The
+    original computes `alpha_r` in every one of its four fitting stages
+    and then never uses it -- every stage's residual-moment formula uses
+    `alpha_t` instead, identically. There's no plausible intentional
+    reading of "compute a variable, use it nowhere, ever" -- this reads
+    as a copy-paste error, most likely from duplicating the trail term's
+    line and forgetting to swap the shifted angle. Fixed here: the
+    residual-moment term below uses `alpha_r`. See CLAUDE.md.
+    """
+    p = coeffs
+    dfz = (fz - fz0_prime) / fz0_prime
+
+    s_ht = p.Hz1 + p.Hz2 * dfz + (p.Hz3 + p.Hz4 * dfz) * gamma_star
+    alpha_t = alpha_star + s_ht
+    alpha_r = alpha_star + s_hf
+
+    bt = (p.Bz1 + p.Bz2 * dfz + p.Bz3 * dfz**2) * (1 + p.Bz4 + p.Bz5 * np.abs(gamma_star))
+    ct = p.Cz1
+    dto = fz * (ro / fz0_prime) * (p.Dz1 + p.Dz7 * dfz)
+    dt = dto * (1 + p.Dz3 * np.abs(gamma_star) + p.Dz4 * gamma_star**2)
+    et = (p.Ez1 + p.Ez3 * dfz) * (
+        1 + (p.Ez4 + p.Ez5 * gamma_star) * (2 / np.pi) * np.arctan(bt * ct * alpha_t)
+    )
+    br = p.Bz9 + p.Bz10 * fy_cy * fy_by
+    cr = 1
+    dr = (
+        fz * ro
+        * (
+            p.Dz6 + p.Ez2 * dfz
+            + ((p.Dz8 + p.Dz9 * dfz) + (p.Dz10 + p.Dz11 * dfz) * np.abs(gamma_star)) * gamma_star
+        )
+        * cos_alpha_p
+    )
+
+    trail = dt * np.cos(ct * np.arctan(bt * alpha_t - et * (bt * alpha_t - np.arctan(bt * alpha_t)))) * cos_alpha_p
+    mzo_p = -trail * fy_og0
+    mzro = dr * np.cos(cr * np.arctan(br * alpha_r)) * cos_alpha_p
+    return mzo_p + mzro

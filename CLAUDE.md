@@ -258,7 +258,71 @@ correct just because they're the original:
     data that can't support it, and not carrying forward the original's
     arbitrary, never-validated `p0.Ky7=2.0` guess either. Real cross-term
     support is a follow-up task, not in scope now.
-13. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
+13. **`Pacejka_Term_Finder_MZ_V1_redo.m` uses the wrong shifted slip angle
+    in its residual-moment term — a real formulation bug, not just a data
+    problem.** Standard MF-Tire 6.1 (which this file's header cites)
+    computes the pneumatic-trail moment using `alpha_t = alpha + S_Ht`
+    (a trail-specific shift) and the *residual* moment using a
+    **different** shifted angle, `alpha_r = alpha + S_Hf` (`S_Hf` derived
+    from the already-fit FY parameters). The MATLAB code computes both
+    correctly, identically in all four fitting stages (`alpha_r` is
+    right there, e.g. `BaseFit.alpha_r = @(Xb) Alpha_star + BaseFit.S_Hf`)
+    — but every residual-moment formula (`Mzro`) in every stage uses
+    `alpha_t` instead, and `alpha_r` is never referenced anywhere else in
+    the file. Computing a variable and never using it is a strong tell
+    this is a copy-paste error (most likely duplicating the trail term's
+    line and forgetting to swap the shifted angle), not a deliberate
+    simplification. **Fixed** in `pacejka/model.py`'s `mz_pure`: the
+    residual-moment term uses `alpha_r`. Confidence here is higher than
+    quirk #9's `Ky1` bounds fix — this is backed by the standard,
+    documented MF-Tire formulation, not a domain guess — and the fix
+    produces a materially different result (multiple times larger, not a
+    rounding-level difference; see the regression test in
+    `tests/golden/test_model_mz_pure.py`).
+14. **`Pacejka_Term_Finder_MZ_V1_redo.m` has the same `Fz_vals` bug as
+    quirk #7, but self-inflicted differently.** Line 12:
+    `Fz_vals = Fz_nom; %[50 100 150 200 250]` — the comment shows the
+    *original* intended value was the full load sweep; someone replaced
+    it with `Fz_nom` (the single value the function is called with).
+    Since `Fz_vals == Fz_nom`, `dfz` is identically 0 throughout the
+    `dFz` stage, making it exactly as unable to identify anything as
+    quirk #7's hardcoded `[50]`. Fixed the same way in
+    `pacejka/fitters/mz.py`'s `fit_mz_coefficients`: a real `load_sweep`
+    spanning multiple tested loads. Unlike the FY term finder's `dFz`
+    stage (unconstrained `nlinfit`), this file's `dFz` stage uses bounded
+    `lsqcurvefit`, so real bounds are enforced here (no robust loss).
+15. **The `dIA` stage uses one hardcoded nonzero camber (`gamma_vals = 2`),
+    not a sweep — milder than quirk #11's FY equivalent, but still poorly
+    identified.** A nonzero camber does give the fit *some* sensitivity
+    (unlike FY's `dIA` stage, which was exactly zero-effect), but several
+    terms here multiply different functions of camber (`gamma`,
+    `gamma^2`, `abs(gamma)`), which can't be distinguished from data at
+    only one nonzero camber value. Fixed the same way: a real multi-camber
+    sweep (e.g. 0/2/4 deg) via `fit_mz_coefficients`'s `camber_sweep`.
+16. **The `dIA`x`dFz` cross term is degenerate for the same reason as
+    quirk #14, and is deferred rather than fixed, matching quirk #12's
+    decision for FY.** Its own `Fz_vals` is `Fz_nom` again, so `dfz` is 0
+    throughout — every term this stage is meant to fit (`Hz4`, `Dz9`,
+    `Dz11`) multiplies `dfz`, so all of them have zero effect on the
+    objective regardless of what they're hardcoded to. `MzCoefficients`'
+    `Hz4`/`Dz9`/`Dz11` are always `0.0` in the Python port, not fit from
+    data that can't support it. Real cross-term support (for both FY and
+    MZ) needs genuine multi-dimensional (Fz × IA) sweep data nothing in
+    the pipeline collects yet — a follow-up task.
+17. **Two purely cosmetic naming oddities in `Pacejka_Term_Finder_MZ_V1_redo.m`**,
+    kept in mind but not treated as bugs: (a) the 10th `Bz` coefficient is
+    named `Bz1o` (letter O, not the digit 0) — clearly meant to be `Bz10`
+    following the file's own numbering convention; named `Bz10` in
+    `pacejka/model.py`'s `MzCoefficients` instead of replicating the typo.
+    (b) `Ez2` (an "E"-prefixed name) is used inside the *residual-moment
+    magnitude* term (`Dr`), not anywhere in the trail-curvature term
+    (`Et`) its name would suggest — functionally consistent (it's
+    referenced positionally, not by name, so the equation itself isn't
+    wrong), just a confusing name for what acts as a `Dr` dFz-sensitivity
+    coefficient. Kept as `Ez2` in `MzCoefficients` for fidelity to the
+    original parameter table naming, flagged here so it isn't mistaken
+    for a transcription error later.
+18. **Optimizer nondeterminism**: `lsqcurvefit`/`nlinfit` in MATLAB and
    `scipy.optimize.least_squares`/`curve_fit` in Python use different
    underlying algorithms (trust-region-reflective variants differ in
    implementation detail, Levenberg-Marquardt line search, etc.). Fitted
