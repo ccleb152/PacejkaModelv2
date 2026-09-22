@@ -34,6 +34,7 @@ from pacejka.fitters.mz import (
     fit_mz_coefficients,
     sweep_point_from_aligning_moment,
 )
+from pacejka.quality import QualityIssue, check_condition_quality, check_round_quality
 from pacejka.segmenting import segment_condition
 
 
@@ -51,6 +52,7 @@ class ConditionResult:
     samples: pd.DataFrame
     fy_splines: AlphaSweepSplines
     mz_splines: AligningMomentSpline
+    quality_issues: list[QualityIssue]
 
 
 @dataclass(frozen=True)
@@ -62,18 +64,32 @@ class CorneringFitResult:
     camber_conditions: list[ConditionResult]
     fy: FyFitResult
     mz: MzFitResult
+    quality_issues: list[QualityIssue]
 
 
 def _process_condition(samples, fz_nom, ia_nom, p_nom, v_nom, test_type) -> ConditionResult:
     segment = segment_condition(
         samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=ia_nom, sa_nom=0.0, v_nom=v_nom, test_type=test_type
     )
+    # Check quality *before* spline-fitting -- a too-sparse segment can
+    # crash deep inside csaps rather than fail cleanly, so a hard error
+    # here is raised instead of attempting to fit it at all (matching
+    # this module's existing "raise a clear ValueError, don't silently
+    # produce a bad fit" philosophy). A soft (warning-level) issue, e.g.
+    # a truncated slip-angle sweep, doesn't block fitting -- it's carried
+    # on the result for the caller to surface.
+    issues = check_condition_quality(segment, fz_nom, ia_nom)
+    errors = [issue for issue in issues if issue.severity == "error"]
+    if errors:
+        raise ValueError(" ".join(issue.message for issue in errors))
+
     return ConditionResult(
         fz_nom=fz_nom,
         ia_nom=ia_nom,
         samples=segment,
         fy_splines=fit_alpha_sweep(segment),
         mz_splines=fit_aligning_moment(segment),
+        quality_issues=issues,
     )
 
 
@@ -95,10 +111,21 @@ def run_cornering_fit(
     middle detected/given load; it must be one of `fz_noms`. Zero camber
     must be among `ia_degs` -- it's the anchor the load sweep is done at.
 
-    Raises `ValueError` if no loads or cambers can be found/used -- this
-    is meant to surface as an actionable message in the Streamlit UI, not
-    to be silently worked around.
+    Raises `ValueError` if no loads or cambers can be found/used, or if
+    the whole round fails `pacejka.quality.check_round_quality` (a
+    required channel is missing/dead, or there's essentially no data --
+    see that module for why this is checked on the raw data rather than
+    by parsing Calspan's free-text run-comment logs). A condition that
+    individually fails `check_condition_quality` also raises -- see
+    `_process_condition`. All of this is meant to surface as an
+    actionable message in the Streamlit UI, not to be silently worked
+    around.
     """
+    round_issues = check_round_quality(samples)
+    round_errors = [issue for issue in round_issues if issue.severity == "error"]
+    if round_errors:
+        raise ValueError(" ".join(issue.message for issue in round_errors))
+
     if fz_noms is None:
         fz_noms = detect_fz_levels(samples, p_nom=p_nom, v_nom=v_nom, test_type=test_type)
     fz_noms = sorted(fz_noms)
@@ -145,4 +172,5 @@ def run_cornering_fit(
         camber_conditions=camber_conditions,
         fy=fy_result,
         mz=mz_result,
+        quality_issues=round_issues,
     )
