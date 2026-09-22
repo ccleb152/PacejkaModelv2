@@ -3,4 +3,5 @@ pandas
 scipy
 csaps
 streamlit
+plotly
 pytest
