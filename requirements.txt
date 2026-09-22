@@ -4,4 +4,5 @@ scipy
 csaps
 streamlit
 plotly
+kaleido>=1.0.0
 pytest

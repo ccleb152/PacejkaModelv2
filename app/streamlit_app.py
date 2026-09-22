@@ -15,9 +15,12 @@ behavior change.
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
+import re
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 # `streamlit run app/streamlit_app.py` doesn't add the repo root to
@@ -28,12 +31,52 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import plotly.graph_objects as go
 import streamlit as st
 
+from pacejka.colors import condition_hue, raw_smoothed_fit_colors
 from pacejka.config import DataRootNotConfigured, get_data_root, set_data_root
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM
 from pacejka.io.parameters import cornering_fit_to_dict
 from pacejka.io.ttc_raw import load_ttc_round
 from pacejka.pipeline import run_cornering_fit
+from pacejka.quality import check_round_quality
+
+
+def _show_quality_issues(issues) -> bool:
+    """Render a list of pacejka.quality.QualityIssue as error/warning
+    boxes. Returns True if any "error"-severity issue was shown -- the
+    caller stops the page in that case, since the underlying data can't
+    be fit at all."""
+    has_error = False
+    for issue in issues:
+        if issue.severity == "error":
+            st.error(issue.message)
+            has_error = True
+        else:
+            st.warning(issue.message)
+    return has_error
+
+
+def _slugify(text: str) -> str:
+    """Make `text` safe to use in a filename: collapse whitespace to a
+    single underscore, drop anything that isn't alphanumeric/./-/_."""
+    text = re.sub(r"\s+", "_", text.strip())
+    return re.sub(r"[^A-Za-z0-9._-]", "", text) or "unnamed"
+
+
+def _ensure_graph_export_engine() -> None:
+    """Make sure Plotly's static-image export (Kaleido) has a Chrome
+    binary to render with. Kaleido v1+ doesn't bundle one -- it fetches
+    its own on first use (cached under Kaleido's own data directory after
+    that, so this only costs time/network once per computer, not once per
+    session). Done lazily here rather than in the launcher scripts so
+    teammates who never export a graph never pay for it."""
+    if st.session_state.get("_graph_export_engine_ready"):
+        return
+    import kaleido
+
+    kaleido.get_chrome_sync()
+    st.session_state["_graph_export_engine_ready"] = True
+
 
 st.set_page_config(page_title="Pacejka Tire Fitting", layout="wide")
 st.title("Pacejka Magic Formula Tire Fitting")
@@ -110,6 +153,16 @@ st.success(
     f"tireid={round_data.tireid!r}, {len(round_data.samples)} samples"
 )
 
+round_level_issues = check_round_quality(round_data.samples)
+if round_level_issues:
+    st.subheader("Data quality")
+    if _show_quality_issues(round_level_issues):
+        st.error(
+            "This file doesn't have enough usable data to fit -- it looks like an "
+            "incomplete or aborted run. Load a different file to continue."
+        )
+        st.stop()
+
 # ---------------------------------------------------------------------------
 # 2. Fit settings
 # ---------------------------------------------------------------------------
@@ -166,23 +219,40 @@ st.caption(
     f"tested cambers: {[c.ia_nom for c in result.camber_conditions]} deg"
 )
 
+condition_warnings = [
+    issue
+    for condition in (*result.load_conditions, *result.camber_conditions)
+    for issue in condition.quality_issues
+] + list(result.quality_issues)
+if condition_warnings:
+    with st.expander(f"Data quality warnings ({len(condition_warnings)})", expanded=True):
+        _show_quality_issues(condition_warnings)
+
 
 def _sweep_overlay_figure(
     conditions, raw_column, spline_attr, smoothed_attr, fit_curves, unit_divisor, label_fn, y_title
 ) -> go.Figure:
     """One Plotly figure overlaying raw scatter + smoothed spline + Pacejka
-    fit curve for each condition in a load or camber sweep."""
+    fit curve for each condition in a load or camber sweep.
+
+    Each condition gets one hue (pacejka.colors.condition_hue, assigned in
+    a fixed order); its raw/smoothed/fit traces are light/medium/dark
+    steps of that *same* hue, so the three traces belonging to one
+    condition read as a group at a glance instead of only via the legend
+    text -- see pacejka/colors.py.
+    """
     fig = go.Figure()
-    for condition, fit_curve in zip(conditions, fit_curves):
+    for index, (condition, fit_curve) in enumerate(zip(conditions, fit_curves)):
         label = label_fn(condition)
         splines = getattr(condition, spline_attr)
+        raw_color, smoothed_color, fit_color = raw_smoothed_fit_colors(condition_hue(index))
         fig.add_trace(
             go.Scatter(
                 x=condition.samples["SA"],
                 y=condition.samples[raw_column],
                 mode="markers",
                 name=f"{label} raw",
-                marker=dict(size=4, opacity=0.3),
+                marker=dict(size=4, opacity=0.5, color=raw_color),
                 legendgroup=label,
             )
         )
@@ -193,6 +263,7 @@ def _sweep_overlay_figure(
                 mode="lines",
                 name=f"{label} smoothed",
                 visible="legendonly",
+                line=dict(color=smoothed_color),
                 legendgroup=label,
             )
         )
@@ -202,13 +273,18 @@ def _sweep_overlay_figure(
                 y=fit_curve / unit_divisor,
                 mode="lines",
                 name=f"{label} fit",
-                line=dict(width=2),
+                line=dict(width=2, color=fit_color),
                 legendgroup=label,
             )
         )
     fig.update_layout(xaxis_title="Slip angle (deg)", yaxis_title=y_title, legend_title="Condition")
     return fig
 
+
+# graph_key -> (display label used in the export multiselect, figure).
+# Populated as each figure below is built so the Export section can reuse
+# the exact same figures without rebuilding them.
+exportable_graphs: dict[str, tuple[str, go.Figure]] = {}
 
 st.subheader("Fy vs. slip angle")
 col_fy_load, col_fy_camber = st.columns(2)
@@ -224,6 +300,7 @@ with col_fy_load:
         lambda c: f"Fz={c.fz_nom:g} lbf",
         "Fy (lbf)",
     )
+    exportable_graphs["FY_LoadSweep"] = ("Fy vs. slip angle -- load sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 with col_fy_camber:
     st.caption(f"Across the camber sweep (Fz={result.reference_fz_nom:g} lbf)")
@@ -237,6 +314,7 @@ with col_fy_camber:
         lambda c: f"IA={c.ia_nom:g} deg",
         "Fy (lbf)",
     )
+    exportable_graphs["FY_CamberSweep"] = ("Fy vs. slip angle -- camber sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 
 st.subheader("Mz vs. slip angle")
@@ -253,6 +331,7 @@ with col_mz_load:
         lambda c: f"Fz={c.fz_nom:g} lbf",
         "Mz (ft-lb)",
     )
+    exportable_graphs["MZ_LoadSweep"] = ("Mz vs. slip angle -- load sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 with col_mz_camber:
     st.caption(f"Across the camber sweep (Fz={result.reference_fz_nom:g} lbf)")
@@ -266,6 +345,7 @@ with col_mz_camber:
         lambda c: f"IA={c.ia_nom:g} deg",
         "Mz (ft-lb)",
     )
+    exportable_graphs["MZ_CamberSweep"] = ("Mz vs. slip angle -- camber sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 
 st.subheader("Fitted coefficients")
@@ -280,8 +360,22 @@ col_mz_table.dataframe(dataclasses.asdict(result.mz.coefficients), use_container
 # ---------------------------------------------------------------------------
 
 st.header("4. Export")
+
+st.subheader("Tire identity")
+st.caption(
+    "Used to name every exported file below, as Compound_DiameterXWidth_<name> "
+    "-- look these up from your Tire ID Schedule (compound is the tire's code, "
+    "e.g. R25B; size is diameter x width, e.g. 20.5x7.0)."
+)
+col_compound, col_diameter, col_width = st.columns(3)
+compound = col_compound.text_input("Compound", value="")
+diameter = col_diameter.text_input("Diameter (in)", value="")
+width = col_width.text_input("Width (in)", value="")
+name_prefix = f"{_slugify(compound)}_{_slugify(diameter)}X{_slugify(width)}"
+
+st.subheader("Fitted coefficients")
 col_tire, col_round, col_run = st.columns(3)
-tire = col_tire.text_input("Tire", value=round_data.tireid or "Tire")
+tire = col_tire.text_input("Tire ID", value=round_data.tireid or "Tire")
 round_num = col_round.number_input("Round", value=0, step=1)
 run_num = col_run.number_input("Run", value=0, step=1)
 
@@ -289,6 +383,49 @@ payload = cornering_fit_to_dict(result, tire=tire, round_=int(round_num), run=in
 st.download_button(
     "Download fitted coefficients (JSON)",
     data=json.dumps(payload, indent=2),
-    file_name=f"{tire}_round{round_num}_run{run_num}_cornering_fit.json",
+    file_name=f"{name_prefix}_Coefficients.json",
     mime="application/json",
 )
+
+st.subheader("Graphs")
+graph_keys = list(exportable_graphs.keys())
+selected_graph_keys = st.multiselect(
+    "Select graphs to export",
+    options=graph_keys,
+    default=graph_keys,
+    format_func=lambda key: exportable_graphs[key][0],
+)
+
+if st.button("Export selected graphs"):
+    if not selected_graph_keys:
+        st.warning("Select at least one graph to export.")
+    else:
+        try:
+            with st.spinner(
+                "Rendering graphs -- the first export on this computer sets up the "
+                "image renderer and needs an internet connection, so it may take a "
+                "little longer than usual..."
+            ):
+                _ensure_graph_export_engine()
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                    for key in selected_graph_keys:
+                        _, fig = exportable_graphs[key]
+                        # Wide/tall enough that the legend (up to 5 conditions
+                        # x 3 traces each, for a load sweep) never gets cut
+                        # off the way it can at the interactive view's default
+                        # inline size.
+                        png_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
+                        zip_file.writestr(f"{name_prefix}_{key}.png", png_bytes)
+            st.session_state["graph_export_zip"] = buffer.getvalue()
+            st.session_state["graph_export_name"] = f"{name_prefix}_graphs.zip"
+        except Exception as exc:
+            st.error(f"Couldn't render graphs for export: {exc}")
+
+if "graph_export_zip" in st.session_state:
+    st.download_button(
+        "Download graphs (ZIP)",
+        data=st.session_state["graph_export_zip"],
+        file_name=st.session_state["graph_export_name"],
+        mime="application/zip",
+    )

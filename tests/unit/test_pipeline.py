@@ -119,9 +119,49 @@ def test_zero_camber_must_be_present(synthetic_round):
         run_cornering_fit(synthetic_round, p_nom=12.0, v_nom=25.0, ia_degs=[2.0, 4.0])
 
 
+def test_explicitly_requesting_an_untested_condition_raises_a_clear_error(synthetic_round):
+    # Requesting a load with essentially no real data (rather than one
+    # that's simply undetected) used to reach the spline fitter with a
+    # near-empty segment and fail with a confusing error deep inside
+    # csaps; pacejka.quality.check_condition_quality now catches this at
+    # the pipeline level with a clear, actionable message instead.
+    with pytest.raises(ValueError, match="Fz=350.*too few"):
+        run_cornering_fit(synthetic_round, p_nom=12.0, v_nom=25.0, fz_noms=[100.0, 150.0, 350.0])
+
+
+def test_a_condition_with_a_truncated_sweep_surfaces_a_warning_not_a_crash():
+    # A condition with enough samples to be usable but a slip-angle sweep
+    # that never completes (e.g. the test was cut short) should still fit
+    # -- just with a warning attached to that condition's result, per
+    # pacejka.quality.check_condition_quality. Built from scratch (rather
+    # than reusing synthetic_round) so the truncated Fz=200 block is the
+    # *only* data at that load -- adding it alongside a full-sweep block
+    # at the same load would just widen the combined segment back out.
+    rng = np.random.RandomState(0)
+    blocks = [_condition_rows(rng, fz, 0.0) for fz in (50.0, 100.0, 150.0, 250.0)]
+    blocks += [_condition_rows(rng, REFERENCE_FZ_NOM, ia) for ia in (2.0, 4.0)]
+    truncated = _condition_rows(rng, fz_nom=200.0, ia_nom=0.0, n=60)
+    truncated["SA"] = np.linspace(-3.0, 3.0, len(truncated))
+    blocks.append(truncated)
+    augmented = pd.concat(blocks, ignore_index=True)
+
+    result = run_cornering_fit(
+        augmented, p_nom=12.0, v_nom=25.0, fz_noms=[50.0, 100.0, 150.0, 200.0, 250.0]
+    )
+
+    condition = next(c for c in result.load_conditions if c.fz_nom == 200.0)
+    assert any(issue.severity == "warning" and "Fz=200" in issue.message for issue in condition.quality_issues)
+
+
 def test_raises_a_clear_error_when_nothing_is_detected():
+    # An empty round now fails the pacejka.quality whole-round gate before
+    # detection even runs -- a more specific, more actionable message
+    # ("0 samples", "entirely missing") than the old generic "no load
+    # levels detected" (which is still what a *non-empty* round with no
+    # matching conditions gets -- see the reference_fz_nom/zero-camber
+    # tests above, which use a real synthetic round).
     empty = pd.DataFrame(
         columns=["FZ", "P", "IA", "SA", "V", "FX", "FY", "MZ", "RE", "RL", "N", "TSTC", "TSTI", "TSTO"]
     )
-    with pytest.raises(ValueError, match="load levels"):
+    with pytest.raises(ValueError, match="0 samples"):
         run_cornering_fit(empty, p_nom=12.0, v_nom=25.0)
