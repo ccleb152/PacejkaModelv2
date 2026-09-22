@@ -13,8 +13,8 @@ from typing import Sequence
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import least_squares
 
+from pacejka.fitting import fit_stage, split_fixed_fields
 from pacejka.model import FyCoefficients, fy_pure
 from pacejka.splines import fit_smoothing_spline
 
@@ -235,71 +235,21 @@ class FyFitResult:
     camber_sweep_fit_fy_n: list[np.ndarray]
 
 
-def _residuals(x, field_names, fixed_values, fz0_prime, alpha_rad, fz_n, gamma_star, target_fy_n):
-    values = dict(fixed_values)
-    values.update(zip(field_names, x))
-    fyo, _ = fy_pure(fz_n, fz0_prime, gamma_star, alpha_rad, FyCoefficients(**values))
-    return fyo - target_fy_n
-
-
-def _split_fixed_fields(field_names, bounds, current_values):
-    """Split (field, bound) pairs into ones scipy can actually optimize and
-    ones MATLAB's lb==ub effectively fixes as a constant.
-
-    `scipy.optimize.least_squares` requires a *strictly* increasing
-    `[lb, ub]` per parameter and raises otherwise; MATLAB's `lsqcurvefit`
-    happily accepts `lb == ub` and treats that parameter as pinned to that
-    value for the whole fit (e.g. Base's `Dy1`, fixed to a known mu_y of
-    2.784 regardless of its stale p0 initial guess). Returns
-    `(free_fields, free_bounds, fixed_updates)`.
-    """
-    free_fields, free_bounds = [], []
-    fixed_updates = {}
-    for name, (lb, ub) in zip(field_names, bounds):
-        if lb == ub:
-            fixed_updates[name] = lb
-        else:
-            free_fields.append(name)
-            free_bounds.append((lb, ub))
-    return free_fields, free_bounds, fixed_updates
-
-
-def _fit_stage(field_names, x0, points, fz0_prime, fixed_values, bounds=None, robust=False):
+def _fit_fy_stage(field_names, x0, points, fz0_prime, fixed_values, bounds=None, robust=False):
+    """Fy-specific residual closure over `pacejka.fitting.fit_stage`."""
     alpha_rad = np.concatenate([p.alpha_rad for p in points])
     fz_n = np.concatenate([np.full_like(p.alpha_rad, p.fz_n) for p in points])
     gamma_star = np.concatenate([np.full_like(p.alpha_rad, p.gamma_star) for p in points])
     target_fy_n = np.concatenate([p.fy_n for p in points])
 
-    x0 = np.asarray(x0, dtype=float)
-    args = (field_names, fixed_values, fz0_prime, alpha_rad, fz_n, gamma_star, target_fy_n)
+    def residuals(x):
+        values = dict(fixed_values)
+        values.update(zip(field_names, x))
+        fyo, _ = fy_pure(fz_n, fz0_prime, gamma_star, alpha_rad, FyCoefficients(**values))
+        return fyo - target_fy_n
 
-    if bounds is None:
-        lb, ub = -np.inf, np.inf
-    else:
-        lb = np.asarray([b[0] for b in bounds], dtype=float)
-        ub = np.asarray([b[1] for b in bounds], dtype=float)
-        # Replicates MATLAB's lsqcurvefit silently clipping an infeasible
-        # x0 into [lb, ub] rather than scipy's least_squares, which raises.
-        x0 = np.clip(x0, lb, ub)
-
-    kwargs = {}
-    if robust:
-        # scipy's robust losses need an f_scale (the residual magnitude at
-        # which a point starts being down-weighted); there's no fixed
-        # value that makes sense across every stage/dataset since Fy
-        # residuals could be single digits or thousands of Newtons
-        # depending on the fit, so it's derived from the data itself (the
-        # initial residual spread) rather than a hardcoded magic number --
-        # approximating MATLAB's nlinfit+bisquare, which auto-scales its
-        # robust weights from the residuals' own MAD. Not an exact match
-        # (bisquare fully rejects far outliers; scipy's 'soft_l1' just
-        # down-weights them), but closer than an arbitrary fixed scale.
-        initial_residuals = _residuals(x0, *args)
-        kwargs["loss"] = "soft_l1"
-        kwargs["f_scale"] = max(float(np.std(initial_residuals)), 1e-6)
-
-    result = least_squares(_residuals, x0, bounds=(lb, ub), args=args, **kwargs)
-    return dict(zip(field_names, result.x))
+    fitted_x = fit_stage(residuals, x0, bounds=bounds, robust=robust)
+    return dict(zip(field_names, fitted_x))
 
 
 def fit_fy_coefficients(
@@ -327,24 +277,24 @@ def fit_fy_coefficients(
     fz0_prime = base.fz_n
     coeffs_values = dict(_P0)
 
-    free_fields, free_bounds, fixed_from_bounds = _split_fixed_fields(_BASE_FIELDS, _BASE_BOUNDS, coeffs_values)
+    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(_BASE_FIELDS, _BASE_BOUNDS, coeffs_values)
     coeffs_values.update(fixed_from_bounds)
     x0 = [coeffs_values[name] for name in free_fields]
     fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
-    coeffs_values.update(_fit_stage(free_fields, x0, [base], fz0_prime, fixed, bounds=free_bounds))
+    coeffs_values.update(_fit_fy_stage(free_fields, x0, [base], fz0_prime, fixed, bounds=free_bounds))
     base_fit_fy_n, _ = fy_pure(
         base.fz_n, fz0_prime, base.gamma_star, base.alpha_rad, FyCoefficients(**coeffs_values)
     )
 
     x0 = [coeffs_values[name] for name in _DFZ_FIELDS]
     fixed = {k: v for k, v in coeffs_values.items() if k not in _DFZ_FIELDS}
-    coeffs_values.update(_fit_stage(_DFZ_FIELDS, x0, load_sweep, fz0_prime, fixed, bounds=None, robust=True))
+    coeffs_values.update(_fit_fy_stage(_DFZ_FIELDS, x0, load_sweep, fz0_prime, fixed, bounds=None, robust=True))
     dfz_coeffs = FyCoefficients(**coeffs_values)
     load_sweep_fit_fy_n = [fy_pure(p.fz_n, fz0_prime, p.gamma_star, p.alpha_rad, dfz_coeffs)[0] for p in load_sweep]
 
     x0 = [coeffs_values[name] for name in _DIA_FIELDS]
     fixed = {k: v for k, v in coeffs_values.items() if k not in _DIA_FIELDS}
-    coeffs_values.update(_fit_stage(_DIA_FIELDS, x0, camber_sweep, fz0_prime, fixed, bounds=_DIA_BOUNDS))
+    coeffs_values.update(_fit_fy_stage(_DIA_FIELDS, x0, camber_sweep, fz0_prime, fixed, bounds=_DIA_BOUNDS))
 
     # Load-camber cross term: deferred, not fit -- see FyFitResult.
     coeffs_values["Ky7"] = 0.0
