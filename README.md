@@ -1,6 +1,8 @@
 # Alabama FSAE PacejkaModelv2
 Alabama FSAE Tire Model version 2
+
 Created by: CC LeBlanc
+
 Last Updated: 09/22/2026
 
 Python port of the team's Pacejka Magic Formula tire-fitting toolchain
