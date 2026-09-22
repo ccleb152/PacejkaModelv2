@@ -2,6 +2,7 @@
 
 ## Immediate Actions
 - Run error messages
+- Readme explaining instructions or added instructions in the actual app
 
 ## Continuous Improvement
 - Extend to longitudinal data plots
