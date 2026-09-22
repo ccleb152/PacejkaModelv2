@@ -1,7 +1,7 @@
 # Things to Fix and WIP's
 
 ## Immediate Actions
-
+Run error messages
 
 ## Continuous Improvement
 Extend to longitudinal data plots
@@ -10,7 +10,7 @@ Have section for viewing certain plots (selecting which ones to view?)
 - Slicer for normal loads, cambers, slip angles, etc..
 
 ## Formatting:
-
+Left-hand tabs for additional applications
 
 ## data cleaning
 tire database goal
@@ -20,4 +20,4 @@ allows user to either select raw data file or select from database housed in rep
 
 ## Confirmaition
 Regression analysis
-comparison of r^2 values to old model?
+Comparison of r^2 values to old model?
