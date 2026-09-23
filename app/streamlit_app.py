@@ -15,12 +15,9 @@ behavior change.
 from __future__ import annotations
 
 import dataclasses
-import io
-import json
 import re
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 # `streamlit run app/streamlit_app.py` doesn't add the repo root to
@@ -35,7 +32,7 @@ from pacejka.colors import condition_hue, raw_smoothed_fit_colors
 from pacejka.config import DataRootNotConfigured, get_data_root, set_data_root
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM
-from pacejka.io.parameters import cornering_fit_to_dict
+from pacejka.io.parameters import cornering_fit_to_dataframe
 from pacejka.io.tire_catalog import (
     find_entries,
     list_compounds,
@@ -435,19 +432,30 @@ diameter = col_diameter.text_input("Diameter (in)", value="")
 width = col_width.text_input("Width (in)", value="")
 name_prefix = f"{_slugify(compound)}_{_slugify(diameter)}X{_slugify(width)}"
 
+st.subheader("Export destination")
+export_dir_input = st.text_input(
+    "Folder to save exported files to",
+    value=str(Path.home() / "Downloads"),
+    help="Files are written directly here -- nothing is zipped, and nothing goes "
+    "through the browser's download prompt.",
+)
+
 st.subheader("Fitted coefficients")
 col_tire, col_round, col_run = st.columns(3)
 tire = col_tire.text_input("Tire ID", value=round_data.tireid or "Tire")
 round_num = col_round.number_input("Round", value=0, step=1)
 run_num = col_run.number_input("Run", value=0, step=1)
 
-payload = cornering_fit_to_dict(result, tire=tire, round_=int(round_num), run=int(run_num))
-st.download_button(
-    "Download fitted coefficients (JSON)",
-    data=json.dumps(payload, indent=2),
-    file_name=f"{name_prefix}_Coefficients.json",
-    mime="application/json",
-)
+if st.button("Export coefficients (CSV)"):
+    try:
+        export_dir = Path(export_dir_input).expanduser()
+        export_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = export_dir / f"{name_prefix}_Coefficients.csv"
+        coefficients_df = cornering_fit_to_dataframe(result, tire=tire, round_=int(round_num), run=int(run_num))
+        coefficients_df.to_csv(csv_path, index=False)
+        st.success(f"Saved {csv_path}")
+    except OSError as exc:
+        st.error(f"Couldn't save to {export_dir_input}: {exc}")
 
 st.subheader("Graphs")
 graph_keys = list(exportable_graphs.keys())
@@ -463,31 +471,25 @@ if st.button("Export selected graphs"):
         st.warning("Select at least one graph to export.")
     else:
         try:
+            export_dir = Path(export_dir_input).expanduser()
+            export_dir.mkdir(parents=True, exist_ok=True)
             with st.spinner(
                 "Rendering graphs -- the first export on this computer sets up the "
                 "image renderer and needs an internet connection, so it may take a "
                 "little longer than usual..."
             ):
                 _ensure_graph_export_engine()
-                buffer = io.BytesIO()
-                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                    for key in selected_graph_keys:
-                        _, fig = exportable_graphs[key]
-                        # Wide/tall enough that the legend (up to 5 conditions
-                        # x 3 traces each, for a load sweep) never gets cut
-                        # off the way it can at the interactive view's default
-                        # inline size.
-                        png_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
-                        zip_file.writestr(f"{name_prefix}_{key}.png", png_bytes)
-            st.session_state["graph_export_zip"] = buffer.getvalue()
-            st.session_state["graph_export_name"] = f"{name_prefix}_graphs.zip"
+                saved_names = []
+                for key in selected_graph_keys:
+                    _, fig = exportable_graphs[key]
+                    png_path = export_dir / f"{name_prefix}_{key}.png"
+                    # Wide/tall enough that the legend (up to 5 conditions x 3
+                    # traces each, for a load sweep) never gets cut off the
+                    # way it can at the interactive view's default inline size.
+                    fig.write_image(str(png_path), width=1200, height=800, scale=2)
+                    saved_names.append(png_path.name)
+            st.success(f"Saved {len(saved_names)} file(s) to {export_dir}: " + ", ".join(saved_names))
+        except OSError as exc:
+            st.error(f"Couldn't save to {export_dir_input}: {exc}")
         except Exception as exc:
             st.error(f"Couldn't render graphs for export: {exc}")
-
-if "graph_export_zip" in st.session_state:
-    st.download_button(
-        "Download graphs (ZIP)",
-        data=st.session_state["graph_export_zip"],
-        file_name=st.session_state["graph_export_name"],
-        mime="application/zip",
-    )
