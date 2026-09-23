@@ -81,6 +81,19 @@ yet ported) should be scoped when we get there:
   at the user's locally-synced OneDrive/SharePoint folder, and every module
   reads that root instead of embedding a path. Configuring it should be a
   one-time step exposed in the Streamlit UI, not a code edit.
+- **`RawDataFiles/` is a deliberate exception to "no real TTC data in the
+  repo."** The team committed real Calspan raw round files (Rounds 6/8/9,
+  Hoosier tires) directly to `main` under `RawDataFiles/<TestType>/*.mat`
+  as a shared, version-controlled tire database every teammate gets on
+  checkout — no personal data-root setup needed for this one bundled
+  dataset. This is intentionally different from the personal `data_root`
+  above (a per-machine folder for a user's *own* not-yet-cataloged files):
+  `RawDataFiles/` is checked-in reference data, read via
+  `pacejka.io.tire_catalog.scan_raw_data_folder` at a fixed repo-relative
+  path, not something a user points at. The original "no real data
+  committed" rule still applies to *test fixtures* (synthetic data only,
+  per "Golden testing" below) — this is a separate, explicit exception for
+  one bundled reference dataset, not a reversal of that rule.
 - **`requirements.txt`** must be kept current as dependencies are added.
 - **Correctness discipline — golden tests.** Every ported function must be
   checked against the original MATLAB output on the same input, within a
@@ -332,6 +345,22 @@ correct just because they're the original:
    coefficient equality.** Pure/deterministic functions (spline evaluation
    at fixed points, Magic Formula evaluation given fixed coefficients,
    `ParaRange`) get exact-value golden tests instead.
+19. **Calspan's own `tireid` metadata string isn't consistently
+   formatted, and one compound label is inconsistent across rounds.**
+   `pacejka/io/tire_catalog.py` parses which physical tire a raw round is
+   (compound/diameter/width) straight out of the file's own `tireid`
+   string rather than cross-referencing Calspan's separate Tire ID
+   Schedule spreadsheet (which isn't shipped with the raw round file and
+   would need per-round manual matching). Two string formats appear
+   across the team's actual Round 6/8/9 files. Round 6 labels one
+   compound `"LCO C2000"` while Round 8 labels the same physical compound
+   just `"LCO"` — **confirmed by the team to be the same compound** (the
+   "C2000" suffix is a batch/cure code, not a distinct compound), so
+   `parse_tire_description` normalizes it via an explicit, confirmed
+   `_COMPOUND_ALIASES` mapping rather than a general "strip the trailing
+   code word" heuristic — a future round's second token might genuinely
+   be a different compound, so only this specific, confirmed case is
+   normalized.
 
 ## Migration workflow
 

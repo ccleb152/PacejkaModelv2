@@ -36,9 +36,36 @@ from pacejka.config import DataRootNotConfigured, get_data_root, set_data_root
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM
 from pacejka.io.parameters import cornering_fit_to_dict
+from pacejka.io.tire_catalog import (
+    find_entries,
+    list_compounds,
+    list_diameters,
+    list_widths,
+    load_combined_round,
+    scan_raw_data_folder,
+)
 from pacejka.io.ttc_raw import load_ttc_round
 from pacejka.pipeline import run_cornering_fit
 from pacejka.quality import check_round_quality
+
+# The team's shared, version-controlled tire database -- committed raw
+# round files under RawDataFiles/<TestType>/*.mat at the repo root (a
+# deliberate exception to the "no real TTC data in the repo" rule for
+# this one bundled reference dataset; see CLAUDE.md). Unlike the personal
+# `data_root` (sidebar, below), this isn't per-machine configuration --
+# it's part of the checked-out repo, so every teammate gets the same
+# catalog with no setup step.
+RAW_DATA_CATALOG_ROOT = Path(__file__).resolve().parent.parent / "RawDataFiles"
+
+# Only Cornering-type files feed the current pipeline (Fx/braking is a
+# future extension per CLAUDE.md's Phase-1 scope) -- BrakeDrive files are
+# still cataloged (for that future work) but not offered here.
+CATALOG_TEST_TYPE = "Cornering"
+
+
+@st.cache_data
+def _scan_catalog(root_str: str):
+    return scan_raw_data_folder(root_str)
 
 
 def _show_quality_issues(issues) -> bool:
@@ -110,10 +137,45 @@ if change:
 # ---------------------------------------------------------------------------
 
 st.header("1. Load raw TTC round data")
-col_browse, col_upload = st.columns(2)
+tab_database, tab_browse, tab_upload = st.tabs(["Tire database", "Browse folder", "Upload file"])
 
-with col_browse:
-    st.subheader("From the configured folder")
+with tab_database:
+    if not RAW_DATA_CATALOG_ROOT.is_dir():
+        st.info(
+            f"No bundled tire database found at {RAW_DATA_CATALOG_ROOT} -- "
+            f"use the other tabs to load a file directly."
+        )
+    else:
+        catalog = _scan_catalog(str(RAW_DATA_CATALOG_ROOT))
+        if catalog.errors:
+            with st.expander(f"{len(catalog.errors)} file(s) in the database could not be read"):
+                for path, message in catalog.errors:
+                    st.warning(f"{path.name}: {message}")
+
+        compounds = list_compounds(catalog.entries, test_type=CATALOG_TEST_TYPE)
+        if not compounds:
+            st.info("No Cornering runs found in the tire database.")
+        else:
+            col_compound, col_diameter, col_width = st.columns(3)
+            compound = col_compound.selectbox("Compound", compounds)
+            diameters = list_diameters(catalog.entries, compound, test_type=CATALOG_TEST_TYPE)
+            diameter = col_diameter.selectbox("Diameter (in)", diameters)
+            widths = list_widths(catalog.entries, compound, diameter, test_type=CATALOG_TEST_TYPE)
+            width = col_width.selectbox("Width (in)", widths)
+
+            matches = find_entries(catalog.entries, compound, diameter, width, test_type=CATALOG_TEST_TYPE)
+            run_list = ", ".join(str(e.run) for e in matches if e.run is not None)
+            st.caption(f"{len(matches)} run(s) found for this tire: #{run_list}")
+
+            if st.button("Load from database"):
+                try:
+                    round_data = load_combined_round(matches)
+                    st.session_state["round_data"] = round_data
+                    st.session_state["source_label"] = f"{compound} {diameter:g}x{width:g} (database)"
+                except Exception as exc:
+                    st.error(f"Couldn't load these runs: {exc}")
+
+with tab_browse:
     if data_root is not None:
         mat_files = sorted(data_root.rglob("*.mat"))
         if mat_files:
@@ -131,8 +193,8 @@ with col_browse:
     else:
         st.info("Configure a tire-data folder in the sidebar to browse files.")
 
-with col_upload:
-    st.subheader("Or upload a file")
+with tab_upload:
+    st.caption("Have a raw file that isn't in the database, or know exactly which run you want? Upload it directly.")
     uploaded = st.file_uploader("Raw TTC round (.mat)", type="mat")
     if uploaded is not None and st.button("Load uploaded file"):
         with tempfile.NamedTemporaryFile(suffix=".mat", delete=False) as tmp:
