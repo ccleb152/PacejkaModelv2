@@ -31,6 +31,15 @@ always larger than its width (6-9 in), so `parse_tire_description` picks
 the larger of the two numbers as the diameter regardless of which side of
 the separator it's on -- robust to both orderings without needing to
 special-case which round used which convention.
+
+The compound token itself also isn't labeled consistently: Round 6 calls
+one compound "LCO C2000" while Round 8 calls the same physical compound
+just "LCO" (confirmed by the team -- not a guess, see CLAUDE.md quirk
+#19). `_COMPOUND_ALIASES` normalizes known cases like this to one
+canonical label so the catalog doesn't show the same compound twice; it's
+a small, explicit, confirmed mapping rather than a general "strip the
+trailing code word" heuristic, since a future round's second token might
+be a genuinely distinct compound rather than a batch/cure code.
 """
 
 from __future__ import annotations
@@ -46,6 +55,14 @@ from scipy.io import loadmat
 from pacejka.io.ttc_raw import TtcRound, load_ttc_round
 
 _METADATA_VARS = ("source", "testid", "tireid", "RUN")
+
+# Confirmed by the team (not a guess): these compound labels refer to the
+# same physical compound, just written inconsistently by Calspan across
+# rounds -- Round 6's "C2000" suffix is a batch/cure code, not a distinct
+# compound. See CLAUDE.md quirk #19.
+_COMPOUND_ALIASES = {
+    "LCO C2000": "LCO",
+}
 
 # "<mfr> <item> <d1>x<d2>-<wheel> <compound>, <rim>" -- Rounds 8/9's
 # consistent format: item code before the size, hyphen before the wheel
@@ -100,9 +117,11 @@ def parse_tire_description(tireid: str) -> TireSpec:
 
     fields = match.groupdict()
     d1, d2 = float(fields["d1"]), float(fields["d2"])
+    compound = fields["compound"].strip()
+    compound = _COMPOUND_ALIASES.get(compound, compound)
     return TireSpec(
         manufacturer=fields["mfr"],
-        compound=fields["compound"].strip(),
+        compound=compound,
         diameter_in=max(d1, d2),
         width_in=min(d1, d2),
         wheel_diameter_in=float(fields["wheel"]),

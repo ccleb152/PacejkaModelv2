@@ -53,7 +53,15 @@ def test_handles_width_before_diameter_ordering():
     spec = parse_tire_description("Hoosier 6.0 / 18.0 10 LCO C2000 (Item 41100), 7 inch rim")
     assert spec.diameter_in == 18.0
     assert spec.width_in == 6.0
-    assert spec.compound == "LCO C2000"
+    # "LCO C2000" (Round 6) and "LCO" (Round 8) are the same physical
+    # compound -- confirmed by the team, see _COMPOUND_ALIASES.
+    assert spec.compound == "LCO"
+
+
+def test_normalizes_known_compound_aliases_to_one_canonical_label():
+    round6 = parse_tire_description("Hoosier 6.0 / 18.0 10 LCO C2000 (Item 41100), 7 inch rim")
+    round8 = parse_tire_description("Hoosier 43075 16x7.5-10 LCO, 7 inch rim")
+    assert round6.compound == round8.compound == "LCO"
 
 
 def test_unrecognized_format_raises_a_clear_error():

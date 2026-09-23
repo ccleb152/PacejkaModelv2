@@ -352,14 +352,15 @@ correct just because they're the original:
    string rather than cross-referencing Calspan's separate Tire ID
    Schedule spreadsheet (which isn't shipped with the raw round file and
    would need per-round manual matching). Two string formats appear
-   across the team's actual Round 6/8/9 files, and — a real, unresolved
-   data inconsistency, not a parsing bug — Round 6 labels one compound
-   `"LCO C2000"` while Round 8 labels what may be the same nominal
-   compound just `"LCO"`. `parse_tire_description` doesn't guess whether
-   these are the same compound or a genuinely different batch/cure code —
-   they're kept as distinct catalog entries, flagged here for the team to
-   confirm from their own records rather than silently merged or split by
-   an assumption in code.
+   across the team's actual Round 6/8/9 files. Round 6 labels one
+   compound `"LCO C2000"` while Round 8 labels the same physical compound
+   just `"LCO"` — **confirmed by the team to be the same compound** (the
+   "C2000" suffix is a batch/cure code, not a distinct compound), so
+   `parse_tire_description` normalizes it via an explicit, confirmed
+   `_COMPOUND_ALIASES` mapping rather than a general "strip the trailing
+   code word" heuristic — a future round's second token might genuinely
+   be a different compound, so only this specific, confirmed case is
+   normalized.
 
 ## Migration workflow
 
