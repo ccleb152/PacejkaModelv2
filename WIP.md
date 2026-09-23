@@ -1,6 +1,8 @@
 # Things to Fix
 
 ## Immediate Actions
+- Once submitted feedback, clear blank text box
+- where's regression analysis?
 - Run error messages
 - Readme explaining instructions or added instructions in the actual app
 
