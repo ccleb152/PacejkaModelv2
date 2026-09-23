@@ -42,6 +42,11 @@ fit_diagnostics_page = st.Page(
     "pages/fit_diagnostics.py",
     title="Fit Diagnostics",
 )
+home_page = st.Page(
+    "pages/home.py",
+    title="Home",
+    default=True,
+)
 
 navigation = st.navigation([tire_fitting_page, fit_diagnostics_page])
 navigation.run()
