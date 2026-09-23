@@ -17,6 +17,8 @@ import dataclasses
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from pacejka.model import FyCoefficients, MzCoefficients
 from pacejka.pipeline import CorneringFitResult
 
@@ -63,3 +65,27 @@ def load_mz_coefficients(payload: dict) -> MzCoefficients:
 def load_cornering_fit_file(path) -> dict:
     """Read back a JSON file written by `save_cornering_fit`."""
     return json.loads(Path(path).read_text())
+
+
+def cornering_fit_to_dataframe(result: CorneringFitResult, tire: str, round_: int, run: int) -> pd.DataFrame:
+    """One tidy (long-format) row per fitted coefficient -- the app's CSV
+    export. Easier to load straight into Excel/pandas/a lapsim's own
+    tooling than the nested JSON schema above, which stays as the
+    round-trip format `load_fy_coefficients`/`load_mz_coefficients` read
+    back (this function doesn't replace that; it's a second, flatter view
+    of the same fit for a different consumer)."""
+    rows = []
+    for quantity, coefficients in (("Fy", result.fy.coefficients), ("Mz", result.mz.coefficients)):
+        for name, value in dataclasses.asdict(coefficients).items():
+            rows.append(
+                {
+                    "tire": tire,
+                    "round": round_,
+                    "run": run,
+                    "reference_fz_nom": result.reference_fz_nom,
+                    "quantity": quantity,
+                    "coefficient": name,
+                    "value": value,
+                }
+            )
+    return pd.DataFrame(rows)
