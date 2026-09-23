@@ -425,6 +425,11 @@ if have_round and not blocked_by_quality:
         col_mz_table.write("**Mz coefficients**")
         col_mz_table.dataframe(dataclasses.asdict(result.mz.coefficients), use_container_width=True)
 
+        st.caption(
+            "For goodness-of-fit details (R²/RMSE per condition), see the "
+            "**Fit Diagnostics** page in the sidebar."
+        )
+
         # ---------------------------------------------------------------
         # 4. Export
         # ---------------------------------------------------------------
