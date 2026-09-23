@@ -11,6 +11,7 @@ import pytest
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM, DEFAULT_RO_M, _cos_alpha_p
 from pacejka.io.parameters import (
+    cornering_fit_to_dataframe,
     cornering_fit_to_dict,
     load_cornering_fit_file,
     load_fy_coefficients,
@@ -120,3 +121,27 @@ def test_load_fy_coefficients_also_accepts_a_bare_coefficients_dict():
     }
     coeffs = load_fy_coefficients(bare)
     assert coeffs.Cy1 == 1.0
+
+
+def test_cornering_fit_to_dataframe_is_tidy_one_row_per_coefficient(fit_result):
+    df = cornering_fit_to_dataframe(fit_result, tire="TestTire", round_=9, run=32)
+    assert list(df.columns) == ["tire", "round", "run", "reference_fz_nom", "quantity", "coefficient", "value"]
+    # 27 Fy fields + 27 Mz fields (see FyCoefficients/MzCoefficients)
+    assert len(df) == 27 + 27
+    assert set(df["quantity"]) == {"Fy", "Mz"}
+    assert (df["tire"] == "TestTire").all()
+    assert (df["round"] == 9).all()
+    assert (df["run"] == 32).all()
+
+    cy1_row = df[(df["quantity"] == "Fy") & (df["coefficient"] == "Cy1")].iloc[0]
+    assert cy1_row["value"] == fit_result.fy.coefficients.Cy1
+
+
+def test_cornering_fit_to_dataframe_round_trips_through_csv(fit_result, tmp_path):
+    df = cornering_fit_to_dataframe(fit_result, tire="TestTire", round_=9, run=32)
+    csv_path = tmp_path / "coefficients.csv"
+    df.to_csv(csv_path, index=False)
+
+    reloaded = pd.read_csv(csv_path)
+    assert len(reloaded) == len(df)
+    assert list(reloaded.columns) == list(df.columns)
