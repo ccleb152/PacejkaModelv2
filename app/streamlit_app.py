@@ -36,7 +36,6 @@ st.set_page_config(page_title="Alabama FSAE Tire Model v2", layout="wide")
 tire_fitting_page = st.Page(
     "pages/tire_fitting.py",
     title="Tire Fitting",
-    default=True,
 )
 fit_diagnostics_page = st.Page(
     "pages/fit_diagnostics.py",
