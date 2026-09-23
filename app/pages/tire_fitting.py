@@ -294,10 +294,18 @@ if have_round and not blocked_by_quality:
                 _show_quality_issues(condition_warnings)
 
         def _sweep_overlay_figure(
-            conditions, raw_column, spline_attr, smoothed_attr, fit_curves, unit_divisor, label_fn, y_title
+            conditions, raw_column, spline_attr, smoothed_attr, fit_curves, unit_divisor, label_fn, y_title,
+            show_types,
         ) -> go.Figure:
             """One Plotly figure overlaying raw scatter + smoothed spline + Pacejka
             fit curve for each condition in a load or camber sweep.
+
+            `show_types` is a set of any of {"Raw", "Smoothed", "Fit"} -- a trace
+            is only added to the figure at all if its type is in that set, so
+            unselected types don't just get hidden, they're not in the legend to
+            begin with (a data-type-level view on top of Plotly's own per-trace
+            legend clicking, which still works independently on whatever traces
+            do get added).
 
             Each condition gets one hue (pacejka.colors.condition_hue, assigned in
             a fixed order); its raw/smoothed/fit traces are light/medium/dark
@@ -310,37 +318,39 @@ if have_round and not blocked_by_quality:
                 label = label_fn(condition)
                 splines = getattr(condition, spline_attr)
                 raw_color, smoothed_color, fit_color = raw_smoothed_fit_colors(condition_hue(index))
-                fig.add_trace(
-                    go.Scatter(
-                        x=condition.samples["SA"],
-                        y=condition.samples[raw_column],
-                        mode="markers",
-                        name=f"{label} raw",
-                        marker=dict(size=4, opacity=0.5, color=raw_color),
-                        legendgroup=label,
+                if "Raw" in show_types:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=condition.samples["SA"],
+                            y=condition.samples[raw_column],
+                            mode="markers",
+                            name=f"{label} raw",
+                            marker=dict(size=4, opacity=0.5, color=raw_color),
+                            legendgroup=label,
+                        )
                     )
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=splines.sa_grid_deg,
-                        y=getattr(splines, smoothed_attr),
-                        mode="lines",
-                        name=f"{label} smoothed",
-                        visible="legendonly",
-                        line=dict(color=smoothed_color),
-                        legendgroup=label,
+                if "Smoothed" in show_types:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=splines.sa_grid_deg,
+                            y=getattr(splines, smoothed_attr),
+                            mode="lines",
+                            name=f"{label} smoothed",
+                            line=dict(color=smoothed_color),
+                            legendgroup=label,
+                        )
                     )
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=splines.sa_grid_deg,
-                        y=fit_curve / unit_divisor,
-                        mode="lines",
-                        name=f"{label} fit",
-                        line=dict(width=2, color=fit_color),
-                        legendgroup=label,
+                if "Fit" in show_types:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=splines.sa_grid_deg,
+                            y=fit_curve / unit_divisor,
+                            mode="lines",
+                            name=f"{label} fit",
+                            line=dict(width=2, color=fit_color),
+                            legendgroup=label,
+                        )
                     )
-                )
             fig.update_layout(xaxis_title="Slip angle (deg)", yaxis_title=y_title, legend_title="Condition")
             return fig
 
@@ -349,67 +359,85 @@ if have_round and not blocked_by_quality:
         # the exact same figures without rebuilding them.
         exportable_graphs: dict[str, tuple[str, go.Figure]] = {}
 
-        st.subheader("Fy vs. Slip Angle")
-        col_fy_load, col_fy_camber = st.columns(2)
-        with col_fy_load:
-            st.caption("Across normal load sweep (zero camber)")
-            fig = _sweep_overlay_figure(
-                result.load_conditions,
-                "FY",
-                "fy_splines",
-                "fy",
-                result.fy.load_sweep_fit_fy_n,
-                LBF_TO_N,
-                lambda c: f"Fz={c.fz_nom:g} lbf",
-                "Fy (lbf)",
+        show_types = set(
+            st.multiselect(
+                "Show",
+                ["Raw", "Smoothed", "Fit"],
+                default=["Raw", "Fit"],
+                help="Choose any combination -- applies to all four plots below. "
+                "You can still toggle individual conditions on/off by clicking "
+                "their legend entries.",
             )
-            exportable_graphs["FY_LoadSweep"] = ("Fy vs. slip angle -- load sweep", fig)
-            st.plotly_chart(fig, use_container_width=True)
-        with col_fy_camber:
-            st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
-            fig = _sweep_overlay_figure(
-                result.camber_conditions,
-                "FY",
-                "fy_splines",
-                "fy",
-                result.fy.camber_sweep_fit_fy_n,
-                LBF_TO_N,
-                lambda c: f"IA={c.ia_nom:g} deg",
-                "Fy (lbf)",
-            )
-            exportable_graphs["FY_CamberSweep"] = ("Fy vs. slip angle -- camber sweep", fig)
-            st.plotly_chart(fig, use_container_width=True)
+        )
+        if not show_types:
+            st.warning("Select at least one of Raw/Smoothed/Fit above to see the plots.")
 
-        st.subheader("Mz vs. Slip Angle")
-        col_mz_load, col_mz_camber = st.columns(2)
-        with col_mz_load:
-            st.caption("Across normal load sweep (zero camber)")
-            fig = _sweep_overlay_figure(
-                result.load_conditions,
-                "MZ",
-                "mz_splines",
-                "mz",
-                result.mz.load_sweep_fit_mz_nm,
-                FTLB_TO_NM,
-                lambda c: f"Fz={c.fz_nom:g} lbf",
-                "Mz (ft-lb)",
-            )
-            exportable_graphs["MZ_LoadSweep"] = ("Mz vs. slip angle -- load sweep", fig)
-            st.plotly_chart(fig, use_container_width=True)
-        with col_mz_camber:
-            st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
-            fig = _sweep_overlay_figure(
-                result.camber_conditions,
-                "MZ",
-                "mz_splines",
-                "mz",
-                result.mz.camber_sweep_fit_mz_nm,
-                FTLB_TO_NM,
-                lambda c: f"IA={c.ia_nom:g} deg",
-                "Mz (ft-lb)",
-            )
-            exportable_graphs["MZ_CamberSweep"] = ("Mz vs. slip angle -- camber sweep", fig)
-            st.plotly_chart(fig, use_container_width=True)
+        if show_types:
+            st.subheader("Fy vs. Slip Angle")
+            col_fy_load, col_fy_camber = st.columns(2)
+            with col_fy_load:
+                st.caption("Across normal load sweep (zero camber)")
+                fig = _sweep_overlay_figure(
+                    result.load_conditions,
+                    "FY",
+                    "fy_splines",
+                    "fy",
+                    result.fy.load_sweep_fit_fy_n,
+                    LBF_TO_N,
+                    lambda c: f"Fz={c.fz_nom:g} lbf",
+                    "Fy (lbf)",
+                    show_types,
+                )
+                exportable_graphs["FY_LoadSweep"] = ("Fy vs. slip angle -- load sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_fy_camber:
+                st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
+                fig = _sweep_overlay_figure(
+                    result.camber_conditions,
+                    "FY",
+                    "fy_splines",
+                    "fy",
+                    result.fy.camber_sweep_fit_fy_n,
+                    LBF_TO_N,
+                    lambda c: f"IA={c.ia_nom:g} deg",
+                    "Fy (lbf)",
+                    show_types,
+                )
+                exportable_graphs["FY_CamberSweep"] = ("Fy vs. slip angle -- camber sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("Mz vs. Slip Angle")
+            col_mz_load, col_mz_camber = st.columns(2)
+            with col_mz_load:
+                st.caption("Across normal load sweep (zero camber)")
+                fig = _sweep_overlay_figure(
+                    result.load_conditions,
+                    "MZ",
+                    "mz_splines",
+                    "mz",
+                    result.mz.load_sweep_fit_mz_nm,
+                    FTLB_TO_NM,
+                    lambda c: f"Fz={c.fz_nom:g} lbf",
+                    "Mz (ft-lb)",
+                    show_types,
+                )
+                exportable_graphs["MZ_LoadSweep"] = ("Mz vs. slip angle -- load sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_mz_camber:
+                st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
+                fig = _sweep_overlay_figure(
+                    result.camber_conditions,
+                    "MZ",
+                    "mz_splines",
+                    "mz",
+                    result.mz.camber_sweep_fit_mz_nm,
+                    FTLB_TO_NM,
+                    lambda c: f"IA={c.ia_nom:g} deg",
+                    "Mz (ft-lb)",
+                    show_types,
+                )
+                exportable_graphs["MZ_CamberSweep"] = ("Mz vs. slip angle -- camber sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Fitted coefficients")
         col_fy_table, col_mz_table = st.columns(2)
