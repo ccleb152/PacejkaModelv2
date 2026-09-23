@@ -1,23 +1,18 @@
-"""Fit diagnostics -- a separate page (Streamlit's native multipage
-support: any .py file under app/pages/ becomes its own page, with an
-auto-generated sidebar switcher) so the main page stays uncluttered for
-casual viewers while the full goodness-of-fit breakdown is one click away
-for anyone who wants it.
+"""Fit diagnostics page -- goodness-of-fit for the current fit, kept off
+the main tire-fitting page so casual viewers aren't shown values they
+don't need, while the full breakdown is one click away for anyone who
+wants it.
 
-Reads the same `st.session_state["fit_result"]` the main page
-(app/streamlit_app.py) already writes -- session state is shared across
-pages in a Streamlit multipage app, so no extra plumbing is needed to get
-the fit here.
+Registered as a page (with an explicit title) by app/streamlit_app.py's
+st.navigation() call -- this module is never run directly by Streamlit.
+`sys.path`/`st.set_page_config` are handled once by that router, not here.
+
+Reads the same `st.session_state["fit_result"]` the tire-fitting page
+writes -- session state is shared across pages in a Streamlit multipage
+app, so no extra plumbing is needed to get the fit here.
 """
 
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-# Same bootstrap as app/streamlit_app.py -- pages run as their own script
-# too, so `pacejka` needs to be importable regardless of the invoking cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import streamlit as st
 
@@ -35,7 +30,6 @@ def _r_squared_color(value: float) -> str:
     return f"background-color: rgb({red}, {green}, 90)"
 
 
-st.set_page_config(page_title="Fit Diagnostics", layout="wide")
 st.title("Fit Diagnostics")
 st.caption(
     "Goodness-of-fit for every condition in the current fit -- how closely each "
@@ -44,7 +38,7 @@ st.caption(
 )
 
 if "fit_result" not in st.session_state:
-    st.info("No fit yet -- go to the main page, load a round, and run a fit first.")
+    st.info("No fit yet -- go to the Tire Fitting page, load a round, and run a fit first.")
     st.stop()
 
 result = st.session_state["fit_result"]
