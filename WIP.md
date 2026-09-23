@@ -15,6 +15,7 @@
 ## Formatting:
 - Left-hand tabs for additional applications 
 - Legend help
+- html icon (page title)
 
 ## Data cleaning
 - tire database goal
