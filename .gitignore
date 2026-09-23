@@ -8,3 +8,8 @@ venv/
 # Local data-root config (per-user, points at the synced OneDrive/SharePoint
 # folder) -- never committed, see pacejka/config.py.
 .pacejka/
+
+# Team feedback submissions -- appended to on every submission, shared via
+# OneDrive sync rather than git (see pacejka/feedback.py). Only the
+# Feedback/ folder itself is tracked (via a placeholder), not its content.
+Feedback/*.csv
