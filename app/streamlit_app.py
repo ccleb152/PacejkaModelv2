@@ -48,5 +48,5 @@ home_page = st.Page(
     default=True,
 )
 
-navigation = st.navigation([tire_fitting_page, fit_diagnostics_page])
+navigation = st.navigation([home_page, tire_fitting_page, fit_diagnostics_page])
 navigation.run()
