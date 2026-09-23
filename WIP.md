@@ -2,9 +2,8 @@
 
 ## Immediate Actions
 - Once submitted feedback, clear blank text box
-- where's regression analysis?
 - Run error messages
-- Readme explaining instructions or added instructions in the actual app
+- HomePage explaining instructions or added instructions in the actual app
 
 ## Continuous Improvement
 - Extend to longitudinal data plots
