@@ -14,5 +14,5 @@ st.caption(
     "page first; this page just reads that result."
 )
 
-st.page_link("tire_fitting.py", label="Tire Fitting", icon="")
+st.page_link("pages/tire_fitting.py", label="Tire Fitting", icon="")
 # st.page_link("fit_diagnostics.py", *, label="Fit Diagnostics", icon="")
