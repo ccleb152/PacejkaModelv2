@@ -12,8 +12,6 @@ st.caption(
     "Home page description"
 )
 
-with st.container(border=True, width="stretch)
-
-
-st.page_link("pages/tire_fitting.py", label="Tire Fitting", icon="")
-st.page_link("pages/fit_diagnostics.py", label="Fit Diagnostics", icon="")
+with st.container(border=True, width="stretch"):
+    st.page_link("pages/tire_fitting.py", label="Tire Fitting", icon="")
+    st.page_link("pages/fit_diagnostics.py", label="Fit Diagnostics", icon="")
