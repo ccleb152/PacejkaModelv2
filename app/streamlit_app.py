@@ -78,8 +78,8 @@ def _ensure_graph_export_engine() -> None:
     st.session_state["_graph_export_engine_ready"] = True
 
 
-st.set_page_config(page_title="Pacejka Tire Fitting", layout="wide")
-st.title("Pacejka Magic Formula Tire Fitting")
+st.set_page_config(page_title="Alabama FSAE Tire Model v2", layout="wide")
+st.title("Alabama FSAE Tire Modeling")
 
 # ---------------------------------------------------------------------------
 # Sidebar: data-folder configuration
