@@ -1,5 +1,5 @@
-# Alabama FSAE PacejkaModelv2
-Alabama FSAE Tire Model version 2
+# Alabama FSAE PacejkaModelv3
+Alabama FSAE Tire Model version 3
 
 Created by: CC LeBlanc
 
