@@ -5,7 +5,8 @@
 - Run error messages
 - HomePage explaining instructions or added instructions in the actual app
 
-## Continuous Improvement
+## Continuous Improvement - Engineering
+- fix MF equations and smoothing params for each fit
 - Extend to longitudinal data plots
 - Interpolate and extrapolate normal loads for more data
 - Have section for viewing certain plots (selecting which ones to view?)
@@ -13,6 +14,7 @@
 
 ## Formatting:
 - Left-hand tabs for additional applications 
+- Legend help
 
 ## Data cleaning
 - tire database goal
