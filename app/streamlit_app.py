@@ -348,10 +348,10 @@ def _sweep_overlay_figure(
 # the exact same figures without rebuilding them.
 exportable_graphs: dict[str, tuple[str, go.Figure]] = {}
 
-st.subheader("Fy vs. slip angle")
+st.subheader("Fy vs. Slip Angle")
 col_fy_load, col_fy_camber = st.columns(2)
 with col_fy_load:
-    st.caption("Across the load sweep (zero camber)")
+    st.caption("Across normal load sweep (zero camber)")
     fig = _sweep_overlay_figure(
         result.load_conditions,
         "FY",
@@ -365,7 +365,7 @@ with col_fy_load:
     exportable_graphs["FY_LoadSweep"] = ("Fy vs. slip angle -- load sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 with col_fy_camber:
-    st.caption(f"Across the camber sweep (Fz={result.reference_fz_nom:g} lbf)")
+    st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
     fig = _sweep_overlay_figure(
         result.camber_conditions,
         "FY",
@@ -379,10 +379,10 @@ with col_fy_camber:
     exportable_graphs["FY_CamberSweep"] = ("Fy vs. slip angle -- camber sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 
-st.subheader("Mz vs. slip angle")
+st.subheader("Mz vs. Slip Angle")
 col_mz_load, col_mz_camber = st.columns(2)
 with col_mz_load:
-    st.caption("Across the load sweep (zero camber)")
+    st.caption("Across normal load sweep (zero camber)")
     fig = _sweep_overlay_figure(
         result.load_conditions,
         "MZ",
@@ -396,7 +396,7 @@ with col_mz_load:
     exportable_graphs["MZ_LoadSweep"] = ("Mz vs. slip angle -- load sweep", fig)
     st.plotly_chart(fig, use_container_width=True)
 with col_mz_camber:
-    st.caption(f"Across the camber sweep (Fz={result.reference_fz_nom:g} lbf)")
+    st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
     fig = _sweep_overlay_figure(
         result.camber_conditions,
         "MZ",
