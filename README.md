@@ -91,3 +91,6 @@ Running the test suite requires the dev dependencies:
 pip install -r requirements.txt
 pytest
 ```
+
+See `tools/README.md` for the feedback-to-GitHub-Issues sync script and
+the automated triage Routine that watches for new feedback issues.
