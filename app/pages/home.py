@@ -3,11 +3,13 @@ the app.
 
 Shows a one-time welcome dialog (`st.dialog`) explaining what this tool is
 for and how to leave feedback, aimed at first-time users during the
-initial feedback-focused rollout. It pops up automatically the first time
-a user reaches this page in a given browser session (tracked via
-`st.session_state`, so it won't re-appear on every page navigation within
-the same session) and can be reopened any time from the "How to use this
-app" button below.
+initial feedback-focused rollout. It pops up automatically only the first
+time the app is opened in a given browser session (tracked via
+`st.session_state`, which persists across page navigation for that
+session but resets on a fresh app launch) and can be reopened any time
+from the "How to use this app" button below. Dismissing it any way --
+the "Got it" button, the dialog's own X, or Esc -- marks it seen, so it
+doesn't keep reappearing on every visit to this page.
 """
 
 from __future__ import annotations
@@ -15,7 +17,15 @@ from __future__ import annotations
 import streamlit as st
 
 
-@st.dialog("Welcome to Alabama FSAE's Tire Model", width="large")
+def _mark_welcome_dialog_seen() -> None:
+    st.session_state["welcome_dialog_seen"] = True
+
+
+@st.dialog(
+    "Welcome to Alabama FSAE's Tire Model",
+    width="large",
+    on_dismiss=_mark_welcome_dialog_seen,
+)
 def _welcome_dialog() -> None:
     st.markdown(
         """
@@ -49,7 +59,7 @@ Fitting page for exactly that.
         unsafe_allow_html=True,
     )
     if st.button("Got it, let's go", type="primary"):
-        st.session_state["welcome_dialog_seen"] = True
+        _mark_welcome_dialog_seen()
         st.rerun()
 
 

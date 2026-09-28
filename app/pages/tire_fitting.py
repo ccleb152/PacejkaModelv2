@@ -542,9 +542,12 @@ st.caption(
     "Tell us what's working, what's confusing, or what you'd like to see next -- "
     "this goes straight to the team's shared Feedback folder."
 )
-feedback_name = st.text_input("Your name")
-feedback_text = st.text_area("Feedback")
-if st.button("Submit feedback"):
+with st.form("feedback_form", clear_on_submit=True):
+    feedback_name = st.text_input("Your name")
+    feedback_text = st.text_area("Feedback")
+    submitted = st.form_submit_button("Submit feedback")
+
+if submitted:
     if not feedback_text.strip():
         st.warning("Enter some feedback before submitting.")
     else:
