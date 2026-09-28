@@ -3,9 +3,27 @@ REM Double-click launcher for the Pacejka tire-fitting app (Windows).
 REM First run: creates a local virtual environment and installs
 REM dependencies. Every run after that: just launches the app.
 REM No terminal typing required -- just double-click this file.
+REM
+REM This project folder is meant to live inside a team-shared OneDrive
+REM folder (so everyone gets the app and the shared Feedback file via
+REM OneDrive sync, no git needed). That means anything written *inside*
+REM this folder gets uploaded to OneDrive and synced back down to every
+REM other teammate's PC. A venv is the wrong thing for that: it's ~300MB
+REM of thousands of small files, and it bakes in an absolute path to one
+REM specific Python install, so it can't be reused on a different
+REM machine. If OneDrive synced one teammate's .venv onto another's PC,
+REM it would look "already set up" but silently be broken.
+REM
+REM So the venv is created OUTSIDE this folder, under this Windows
+REM account's local, per-machine app-data directory (%LOCALAPPDATA%),
+REM which OneDrive never syncs. Every teammate ends up with their own
+REM local venv built from their own Python install, and this synced
+REM folder only ever holds the app's source code and shared data.
 
 setlocal
 cd /d "%~dp0"
+
+set "VENV_DIR=%LOCALAPPDATA%\AlabamaFSAE-PacejkaModelv2\venv"
 
 where python >nul 2>&1
 if %errorlevel%==0 (
@@ -26,9 +44,9 @@ if %errorlevel%==0 (
     )
 )
 
-if not exist ".venv" (
+if not exist "%VENV_DIR%" (
     echo Setting up the app for the first time -- this can take a minute...
-    %PYTHON% -m venv .venv
+    %PYTHON% -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo.
         echo Failed to create the Python environment. See the message above.
@@ -45,15 +63,16 @@ REM bootstrap silently failed during venv creation) that leaves "pip" and
 REM "streamlit" resolving to a *different*, global Python instead of this
 REM project's isolated one -- with no error, just packages landing in the
 REM wrong place and "streamlit is not recognized" when it's time to run.
-REM Invoking ".venv\Scripts\python.exe" directly can't be redirected like
-REM that: it's an unambiguous path to this project's own interpreter.
-set "VENV_PY=.venv\Scripts\python.exe"
+REM Invoking python.exe directly by its full path can't be redirected
+REM like that: it's an unambiguous path to this project's own interpreter.
+set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
 if not exist "%VENV_PY%" (
     echo.
     echo The virtual environment looks incomplete -- %VENV_PY% is missing.
-    echo Delete the .venv folder next to this script and double-click it
-    echo again to rebuild it from scratch.
+    echo Delete this folder and double-click this script again to rebuild
+    echo it from scratch:
+    echo   %VENV_DIR%
     echo.
     pause
     exit /b 1

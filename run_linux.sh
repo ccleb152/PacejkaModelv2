@@ -7,6 +7,24 @@
 # double-clicking just opens this file in a text editor, either enable
 # "Allow executing file as program" in its file properties, or run it
 # once from a terminal (`./run_linux.sh`) after `chmod +x run_linux.sh`.
+#
+# This project folder is meant to live inside a team-shared OneDrive
+# folder (so everyone gets the app and the shared Feedback file via
+# OneDrive sync, no git needed). That means anything written *inside*
+# this folder gets uploaded to OneDrive and synced back down to every
+# other teammate's machine. A venv is the wrong thing for that: it's
+# ~300MB of thousands of small files, and it bakes in an absolute path
+# to one specific Python install, so it can't be reused on a different
+# machine. If OneDrive synced one teammate's .venv onto another's
+# machine, it would look "already set up" but silently be broken.
+#
+# So the venv is created OUTSIDE this folder, under this account's
+# local, per-machine data directory (XDG_DATA_HOME, normally
+# ~/.local/share), which OneDrive never syncs. Every teammate ends up
+# with their own local venv built from their own Python install, and
+# this synced folder only ever holds the app's source code and shared
+# data.
+VENV_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/AlabamaFSAE-PacejkaModelv2/venv"
 
 cd "$(dirname "$0")"
 
@@ -19,9 +37,9 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ ! -d ".venv" ]; then
+if [ ! -d "$VENV_DIR" ]; then
     echo "Setting up the app for the first time -- this can take a minute..."
-    python3 -m venv .venv
+    python3 -m venv "$VENV_DIR"
     if [ $? -ne 0 ]; then
         echo ""
         echo "Failed to create the Python environment. See the message above."
@@ -35,15 +53,17 @@ fi
 # adjusting PATH, and if a venv's pip bootstrap silently failed (rare, but
 # possible on some Python installs), bare commands can quietly resolve to
 # a different, global Python with no error, until "streamlit" turns up
-# missing when it's time to run. ".venv/bin/python" is an unambiguous path
-# to this project's own interpreter -- it can't be redirected like that.
-VENV_PY=".venv/bin/python"
+# missing when it's time to run. Invoking python's full path directly is
+# an unambiguous path to this project's own interpreter -- it can't be
+# redirected like that.
+VENV_PY="$VENV_DIR/bin/python"
 
 if [ ! -x "$VENV_PY" ]; then
     echo ""
     echo "The virtual environment looks incomplete -- $VENV_PY is missing."
-    echo "Delete the .venv folder next to this script and double-click it"
-    echo "again to rebuild it from scratch."
+    echo "Delete this folder and double-click this script again to rebuild"
+    echo "it from scratch:"
+    echo "  $VENV_DIR"
     echo ""
     read -p "Press Enter to close this window..."
     exit 1

@@ -53,7 +53,33 @@ remembers this afterward, so you only do it once per computer.
 3. Run the fit — it fits the Magic Formula coefficients across the full
    sweep automatically.
 4. Review the Fy/Mz vs. slip-angle plots and fitted coefficient tables.
-5. Export the result as a JSON file to save or share.
+5. Export the fitted coefficients (CSV) and graphs to a folder of your choice.
+
+## Distributing this to your team
+
+This whole project folder is meant to live inside a **team-shared OneDrive
+folder**, not to be cloned from git by each teammate:
+
+1. Put this folder inside your team's shared OneDrive (or move it there
+   once, if you're reading this from a git checkout).
+2. Share that OneDrive folder with your teammates. Once they accept, their
+   own OneDrive client syncs it down to their computer automatically.
+3. Each teammate needs Python 3.11+ installed once (see the Requirement
+   above) — after that, they just double-click the launcher for their OS.
+4. Everyone reads/writes the same synced `RawDataFiles/` tire database and
+   `Feedback/feedback.csv` file, since OneDrive syncs any changes back out
+   to the rest of the team.
+
+**Why the app still works smoothly even though it lives in a synced
+folder:** the launchers deliberately create each teammate's Python virtual
+environment *outside* this folder (under their own account's local
+app-data directory, e.g. `%LOCALAPPDATA%` on Windows) instead of inside
+it. A venv is hundreds of megabytes of small files tied to one specific
+Python install, so if it lived inside the synced folder, OneDrive would
+try to sync one teammate's (unusable, machine-specific) venv onto
+everyone else's computer. Keeping it out of the synced folder means every
+teammate gets their own working venv, built once, and OneDrive only ever
+has to sync the actual app code and data.
 
 ## For developers
 
