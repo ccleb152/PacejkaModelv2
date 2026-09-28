@@ -34,7 +34,7 @@ SA_GRID_DEG = np.linspace(-12.25, 12.25, 491)
 _SMOOTHING_PARAMS = {
     "FX": 0.99999,
     "FY": 0.90,
-    "MZ": 0.1,
+    "MZ": 0.999,
     "Vc": 0.99999,
 }
 

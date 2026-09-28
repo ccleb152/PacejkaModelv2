@@ -4,8 +4,10 @@
 - Once submitted feedback, clear blank text box
 - Run error messages
 - HomePage explaining instructions or added instructions in the actual app
+- Superbase beta deployment
 
 ## Continuous Improvement - Engineering
+- create agent to go through feedback and auto write revisions and create pull requests to review
 - fix MF equations and smoothing params for each fit
 - Extend to longitudinal data plots
 - Interpolate and extrapolate normal loads for more data
@@ -13,8 +15,6 @@
 - Slicer for normal loads, cambers, slip angles, etc..
 
 ## Formatting:
-- Left-hand tabs for additional applications 
-- Legend help
 - html icon (page title)
 
 ## Data cleaning

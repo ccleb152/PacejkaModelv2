@@ -15,18 +15,18 @@ from __future__ import annotations
 import streamlit as st
 
 
-@st.dialog("Welcome to the Alabama FSAE Tire Model tool", width="large")
+@st.dialog("Welcome to Alabama FSAE's Tire Model", width="large")
 def _welcome_dialog() -> None:
     st.markdown(
         """
 This app is a Python replacement for the team's MATLAB Pacejka tire-fitting
-toolchain -- it takes raw Calspan TTC tire test data, fits Magic Formula
+toolchain - it takes raw Calspan TTC tire test data, fits Magic Formula
 tire model coefficients (lateral force and aligning moment for now), and
 lets you export those coefficients and plots for lap sim or reports.
 
 **We're sharing it early to collect feedback** before it becomes the
 team's default tool, so please try it out and tell us what's confusing,
-broken, or missing -- there's a Feedback box at the bottom of the Tire
+broken, or missing - there's a Feedback box at the bottom of the Tire
 Fitting page for exactly that.
 
 **How to use it:**

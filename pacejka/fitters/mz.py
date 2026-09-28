@@ -42,7 +42,7 @@ _OUTER_POS_SA = np.linspace(4.7, 12.3, 153)
 SA_GRID_DEG = np.concatenate([_OUTER_NEG_SA, _INNER_SA, _OUTER_POS_SA])
 
 # The original's MATLAB SmoothingParam for SA->MZ.
-_MZ_SMOOTHING_PARAM = 0.75
+_MZ_SMOOTHING_PARAM = 0.999
 
 
 @dataclass(frozen=True)
