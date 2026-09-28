@@ -19,6 +19,8 @@ import streamlit as st
 def _welcome_dialog() -> None:
     st.markdown(
         """
+<div style="font-size: 1.15rem; line-height: 1.6;">
+
 This app is a Python replacement for the team's MATLAB Pacejka tire-fitting
 toolchain - it takes raw Calspan TTC tire test data, fits Magic Formula
 tire model coefficients (lateral force and aligning moment for now), and
@@ -41,7 +43,10 @@ Fitting page for exactly that.
 5. **Leave feedback** at the bottom of the Tire Fitting page any time --
    even if you didn't get through a full fit. Anything helps: confusing
    labels, missing features, or just "this crashed."
-        """
+
+</div>
+        """,
+        unsafe_allow_html=True,
     )
     if st.button("Got it, let's go", type="primary"):
         st.session_state["welcome_dialog_seen"] = True
