@@ -84,8 +84,10 @@ has to sync the actual app code and data.
 ## For developers
 
 See `CLAUDE.md` for the MATLAB → Python migration conventions and known
-source-code quirks, and `MIGRATION_PLAN.md` for the translation plan.
-Running the test suite requires the dev dependencies:
+source-code quirks, `MIGRATION_PLAN.md` for the translation plan, and
+`MODEL_CHANGES.md` for a dated log of physics/math changes to the model
+and why they were made. Running the test suite requires the dev
+dependencies:
 
 ```
 pip install -r requirements.txt
