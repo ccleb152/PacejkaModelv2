@@ -41,8 +41,17 @@ _INNER_SA = np.linspace(-4.675, 4.675, 375)
 _OUTER_POS_SA = np.linspace(4.7, 12.3, 153)
 SA_GRID_DEG = np.concatenate([_OUTER_NEG_SA, _INNER_SA, _OUTER_POS_SA])
 
-# The original's MATLAB SmoothingParam for SA->MZ.
-_MZ_SMOOTHING_PARAM = 0.999
+# The original MATLAB tool's SmoothingParam for SA->MZ in
+# Raw_Data_Fitter_Mz_V2.m -- 0.75, per CLAUDE.md's "Fitting stack" note
+# on the per-file hand-tuned values. This was changed to 0.999 directly
+# on main at some point (likely confused with Raw_Data_Fitter_Fy_V3.m's
+# own, separate MZ-channel value, which legitimately is 0.999 -- see
+# pacejka/fitters/fy.py's _SMOOTHING_PARAMS -- but that's a different
+# file's constant for a different purpose). At 0.999 the spline is close
+# to pure interpolation and tracks noise instead of the underlying curve,
+# which measurably degraded the Mz fit (see MODEL_CHANGES.md). Reverted
+# to the original 0.75.
+_MZ_SMOOTHING_PARAM = 0.75
 
 
 @dataclass(frozen=True)

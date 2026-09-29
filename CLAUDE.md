@@ -3,7 +3,10 @@
 This file persists constraints and conventions for the MATLAB → Python
 migration of Alabama FSAE's tire modeling codebase. Read this before doing
 any work in this repo. See `MIGRATION_PLAN.md` for the inventory, call
-graph, translation order, and testing strategy.
+graph, translation order, and testing strategy, and `MODEL_CHANGES.md` for
+a dated log of *why* a given physics/math change was made -- this file
+documents current known quirks and conventions, `MODEL_CHANGES.md`
+documents the history of decisions made about them.
 
 ## What this project is
 
