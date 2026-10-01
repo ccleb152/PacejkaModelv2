@@ -151,11 +151,12 @@ def sweep_point_from_aligning_moment(
 # p0 in the MATLAB source (all 1.0, except Dz4/Dz11=3.0 -- a uniform,
 # not-domain-tuned placeholder set; MATLAB's own silent x0-into-bounds
 # clipping, replicated by pacejka.fitting.fit_stage, handles the many
-# resulting infeasible initial guesses sensibly -- e.g. Hz1's bound is
+# resulting infeasible initial guesses sensibly -- e.g. Hz1's bound was
 # +/-0.01, so an initial guess of 1.0 just clips to the boundary nearest
 # zero, which is actually a reasonable starting point for a shift term).
-# Hz4/Dz9/Dz11 (the load-camber cross term) are never fit -- see
-# MzFitResult -- so their p0 value never matters; kept for completeness.
+# Hz4/Dz9/Dz11 (the load-camber cross term) and Dz2 (see _DFZ_FIELDS
+# below) are never fit -- see MzFitResult -- so their p0 value never
+# matters; kept for completeness.
 _MZ_P0 = dict(
     Hz1=1.0, Hz2=1.0, Hz3=1.0, Hz4=1.0,
     Bz1=1.0, Bz2=1.0, Bz3=1.0, Bz4=1.0, Bz5=1.0,
@@ -171,6 +172,17 @@ _MZ_P0 = dict(
 # exactly. Bz4's bounds (20.0, 20.0) are a deliberate zero-width fix
 # (same mechanism as the FY term finder's Dy1 -- see
 # pacejka.fitting.split_fixed_fields), not a typo.
+#
+# Hz1 pegs exactly at this (-0.01, 0.01) bound on real R20 16x7.5 TTC
+# data. Investigated widening it (see MODEL_CHANGES.md) -- unlike FY's
+# Ky1 bounds (CLAUDE.md quirk #9), this isn't "the true optimum is just
+# past the bound": with much wider bounds the fit doesn't converge to an
+# interior value at all, it runs to whatever bound it's given. That's a
+# sign the Base-stage data doesn't actually determine Hz1 independently
+# of the other shift terms, not that the bound is wrong. Left as the
+# original MATLAB value; genuinely loosening this needs an identifiability
+# fix (more/better-conditioned data or a reparameterization), not a wider
+# bracket.
 _BASE_FIELDS = ("Hz1", "Bz1", "Bz4", "Bz9", "Bz10", "Cz1", "Dz1", "Dz6", "Ez1", "Ez4")
 _BASE_BOUNDS = (
     (-0.01, 0.01),
@@ -196,12 +208,24 @@ _BASE_BOUNDS = (
 # term finder's dFz stage (fit with unconstrained `nlinfit`), this one
 # uses bounded `lsqcurvefit` in the original, so real bounds are enforced
 # here too (no robust loss).
-_DFZ_FIELDS = ("Hz2", "Bz2", "Bz3", "Dz2", "Dz7", "Ez2", "Ez3")
+#
+# `Dz2` is deliberately NOT in this list, even though the original MATLAB
+# declares it as a free dFz-stage parameter (`qstat.Dz2 = [0 1 0 0 0]`).
+# It's a dead parameter in the original source itself: `Dto`'s formula
+# (`BaseFit.Dto`/`dFzFit.Dto` etc.) uses `Xb(7) + Xf(5)*dfz`, i.e.
+# `Dz1 + Dz7*dfz` -- `Dz2` is never referenced anywhere in the file. This
+# isn't a porting bug (the Python `mz_pure` formula faithfully matches),
+# but it does waste one of only 7 dFz-stage degrees of freedom on a
+# parameter the model can't possibly use, confirmed on real R20 16x7.5
+# data where the fitted `Dz2` was an arbitrary, meaningless value (see
+# MODEL_CHANGES.md). Pinned to 0.0 in `fit_mz_coefficients` instead of
+# fit from data it structurally can't affect -- the same treatment as
+# Hz4/Dz9/Dz11 below.
+_DFZ_FIELDS = ("Hz2", "Bz2", "Bz3", "Dz7", "Ez2", "Ez3")
 _DFZ_BOUNDS = (
     (-0.015, 0.015),
     (-70.0, 20.0),
     (-70.0, 20.0),
-    (-50.0, 20.0),
     (-50.0, 20.0),
     (-50.0, 20.0),
     (-20.0, 270.0),
@@ -215,6 +239,18 @@ _DFZ_BOUNDS = (
 # different functions of gamma (gamma, gamma**2, abs(gamma)), which can't
 # be told apart from data at only one nonzero camber value. Fixed the
 # same way: a real multi-camber sweep (e.g. 0/2/4 deg).
+#
+# Hz3, Bz5, and Dz4 all peg exactly at their bound on real R20 16x7.5
+# TTC data too. Same investigation and same conclusion as Hz1 above
+# (see MODEL_CHANGES.md): widening these bounds doesn't converge to an
+# interior optimum, it runs to whichever bound it's given, and it
+# measurably destabilizes the synthetic fixture's fit quality
+# (tests/unit/test_regression.py) in the process. With only 3 tested
+# camber angles (0/2/4 deg) fitting 7 dIA-stage parameters, several of
+# which multiply different functions of gamma, this stage is thinly
+# determined -- the original MATLAB bounds are inadvertently acting as a
+# regularizer here, not an arbitrary restriction like FY's Ky1 was.
+# Left at the original MATLAB values.
 _DIA_FIELDS = ("Hz3", "Bz5", "Dz3", "Dz4", "Dz8", "Dz10", "Ez5")
 _DIA_BOUNDS = (
     (-0.01, 0.01),
@@ -286,6 +322,12 @@ class MzFitResult:
     actually identify a cross term regardless of what it's hardcoded to.
     Deferred as a follow-up, same as FY's cross term, rather than fit
     from data that can't support it. See CLAUDE.md.
+
+    `coefficients.Dz2` is also always 0.0, for an unrelated reason: it's
+    a dead parameter in the original MATLAB source itself (never
+    referenced by any `Dto` formula), not something this port can fit
+    meaningfully regardless of data. See `_DFZ_FIELDS` and
+    MODEL_CHANGES.md.
     """
 
     coefficients: MzCoefficients
@@ -322,6 +364,7 @@ def fit_mz_coefficients(
     coeffs_values["Hz4"] = 0.0
     coeffs_values["Dz9"] = 0.0
     coeffs_values["Dz11"] = 0.0
+    coeffs_values["Dz2"] = 0.0
 
     base_fy_derived = [_fy_derived_terms(base, fz0_prime, fy_coefficients)]
     free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(_BASE_FIELDS, _BASE_BOUNDS, coeffs_values)
