@@ -48,6 +48,12 @@ images).
   coefficients simultaneously against the full multi-condition dataset
   at once. See the script's own docstring for the motivation and how to
   read its output.
+- `fy_joint_vs_staged_fit.py` -- same comparison, for Fy. See
+  `OPTIMIZATION_NOTES.md` -- the result does NOT match Mz's (joint
+  fitting helped Mz's camber sweep but hurts Fy across the board), which
+  is itself the useful finding: it's not a generic property of joint
+  fitting, it depends on which stage is actually under-identified for a
+  given equation.
 
 See `OPTIMIZATION_NOTES.md` for the running log of what's been tried,
 what the results were, and whether each approach is worth carrying into

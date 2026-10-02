@@ -63,6 +63,54 @@ the setup from scratch.
   could recover the camber-sweep improvement without losing load-sweep
   accuracy. Not yet tried.
 
+### Joint (simultaneous) least-squares fit vs. staged -- for Fy, checking whether the Mz trend generalizes
+
+- **Script:** `research/fy_joint_vs_staged_fit.py`
+- **Date:** 2026-10-02
+- **What:** Same question as the Mz experiment above, same structure,
+  same tire (R20 16x7.5) -- does joint fitting trade load-sweep accuracy
+  for camber-sweep accuracy here too, or was that an Mz-specific result?
+  Uses `pacejka.fitters.fy`'s actual field/bound tables (the dFz-stage
+  fields are unconstrained in production, matching MATLAB's `nlinfit`,
+  so they're given `(-inf, inf)` bounds here rather than an invented box
+  constraint) and fits plain least squares throughout (no robust loss,
+  even though production uses `robust=True` for Fy's dFz stage) so the
+  staged-vs-joint comparison isn't confounded with a loss-function
+  change.
+- **Result: does NOT replicate the Mz trend -- in fact closer to the
+  opposite.** The staged Fy fit is already excellent everywhere (R²
+  0.993-0.9999, both load and camber sweeps), unlike Mz's staged fit,
+  where the camber sweep specifically was weak. Joint fitting has
+  nothing to gain there and real room to lose:
+
+  | Condition | Staged R² | Joint R² |
+  |---|---|---|
+  | Fz=50 lbf | 0.994 | 0.805 (worse) |
+  | Fz=100 lbf | 0.999 | 0.927 (worse) |
+  | Fz=150 lbf | 0.9999 | 0.994 (worse) |
+  | Fz=200 lbf | 0.999 | **0.481** (much worse) |
+  | Fz=250 lbf | 0.997 | 0.919 (worse) |
+  | IA=2 deg | 0.9998 | 0.997 (slightly worse) |
+  | IA=4 deg | 0.9998 | 0.9995 (slightly worse) |
+
+  Every condition got worse under joint fitting, load sweep severely so
+  (Fz=200 lbf visibly collapses toward a near-flat line in the plot) and
+  camber sweep only marginally (it had almost no room to improve, being
+  already near-perfect).
+- **Why the trend doesn't generalize:** the Mz camber-sweep win wasn't a
+  generic property of joint fitting -- it was specific to Mz's dIA stage
+  being badly under-identified in the staged approach (see the Mz entry
+  above and `MODEL_CHANGES.md`'s 2026-10-01 entry). Fy's dIA stage
+  doesn't have that problem on this tire's real data, so joint fitting
+  has no weakness to fix there, and the same "everything competes in one
+  unweighted objective" effect that helped Mz's camber sweep just costs
+  Fy's already-good load sweep instead.
+- **Decision: not adopted.** Clearly worse than the staged fit for Fy on
+  this data. Confirms that "joint vs. staged" isn't a one-size-fits-all
+  answer -- it depends on which stage is actually under-identified in the
+  staged approach for a given equation, not something to apply uniformly
+  to both Fy and Mz.
+
 ---
 
 ## Candidates not yet tried
