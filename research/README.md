@@ -25,10 +25,14 @@ research script's logic in, not merging this branch wholesale.
 
 Each script imports `pacejka`'s existing public, stateless functions
 directly (`pacejka.model.mz_pure`, `pacejka.model.MzCoefficients`, the
-loaders in `pacejka.fitters.*`) rather than modifying them in place, and
-rather than reaching into their private `_`-prefixed internals. That
-keeps every experiment self-contained and easy to compare against the
-production behavior side by side.
+loaders in `pacejka.fitters.*`) rather than modifying them in place.
+They don't *modify* any production module's private internals either --
+but a script comparing against the production fit may still *import* a
+module's private field/bound tables (e.g. `pacejka.fitters.mz`'s
+`_BASE_FIELDS`/`_BASE_BOUNDS`) read-only, specifically so the comparison
+uses the exact same coefficients/bounds/initial guesses as production
+rather than a hand-copied approximation of them. Each script's docstring
+says when and why it does this.
 
 Scripts read real data from `RawDataFiles/` (the bundled Calspan
 reference set) or your own configured data root
@@ -44,3 +48,7 @@ images).
   coefficients simultaneously against the full multi-condition dataset
   at once. See the script's own docstring for the motivation and how to
   read its output.
+
+See `OPTIMIZATION_NOTES.md` for the running log of what's been tried,
+what the results were, and whether each approach is worth carrying into
+production -- including ideas raised but not yet implemented.
