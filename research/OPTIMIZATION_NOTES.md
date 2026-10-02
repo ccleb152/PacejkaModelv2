@@ -61,7 +61,58 @@ the setup from scratch.
   condition's peak |Mz| before computing the sum of squares) so the
   250 lbf condition can't drown out the 50 lbf one. Hypothesis: this
   could recover the camber-sweep improvement without losing load-sweep
-  accuracy. Not yet tried.
+  accuracy. **Tried below -- partial win, overcorrects.**
+
+### Weighted joint fit for Mz -- normalizing by each condition's own peak |Mz|
+
+- **Script:** `research/mz_joint_vs_staged_fit.py` (extended to a 3-way
+  comparison: staged / joint unweighted / joint weighted)
+- **Date:** 2026-10-02
+- **What:** The follow-up identified above. Same joint fit as before,
+  but each condition's residual block is divided by `max(|Mz|)` for that
+  condition before the optimizer sums squares, so the 250 lbf
+  condition's much larger absolute signal can't dominate the 50 lbf
+  condition's contribution to the objective.
+- **Result:** Partial win on load, but overcorrects -- and costs
+  something back on the high-load end that the unweighted fit didn't:
+
+  | Condition | Staged R² | Joint (unweighted) | Joint (weighted) |
+  |---|---|---|---|
+  | Fz=50 lbf | 0.699 | 0.475 | 0.678 (recovers most of the way) |
+  | Fz=100 lbf | 0.925 | 0.841 | 0.883 (partial recovery) |
+  | Fz=150 lbf | 0.966 | 0.965 | 0.956 |
+  | Fz=200 lbf | 0.978 | 0.976 | 0.928 (newly worse) |
+  | Fz=250 lbf | 0.986 | 0.985 | 0.966 (newly worse) |
+  | IA=2 deg | 0.894 | 0.965 | 0.963 (camber win preserved) |
+  | IA=4 deg | 0.750 | 0.961 | 0.956 (camber win preserved) |
+
+  The R² table understates how visually rough this gets: in the
+  comparison plot, the weighted fit's 200/250 lbf curves clip
+  noticeably below their actual peaks (250 lbf's positive peak comes in
+  around 29 ft-lb against the data's ~45) -- a materially worse-looking
+  fit than either staged or the unweighted joint fit at those
+  conditions, which the R² number (0.966, still "good" in isolation)
+  doesn't fully convey on its own. Equalizing every condition's
+  influence worked for pulling the small-amplitude conditions up, but it
+  overshot and pulled the large-amplitude ones down more than expected.
+- **Decision: not adopted.** Better than the unweighted joint fit at the
+  low end, worse than both staged and unweighted joint at the high end.
+  Still not a clear win over the staged production fit anywhere in the
+  load sweep, even though the camber-sweep win carries over intact.
+- **Next step identified:** the `1/max(|Mz|)` weighting is a fairly
+  blunt, maximally-equalizing choice. A gentler version --
+  `1/sqrt(max(|Mz|))`, which narrows the gap between conditions' weights
+  instead of fully equalizing them -- might recover more of the
+  low-load accuracy without overcorrecting the high-load end as hard.
+  Worth a quick sweep over a few weighting exponents before concluding
+  weighting alone can't thread this needle. Separately, a more
+  structurally different idea -- a "partial staged" fit that keeps the
+  production Base/dFz stages exactly as they are (since they're already
+  excellent) but lets a few Base-stage coefficients that interact with
+  camber (e.g. `Bz1`/`Bz4`, which `bt`'s formula couples with `Bz5`) stay
+  free during the dIA stage instead of fully frozen -- hasn't been tried
+  and may be a more promising direction than tuning a weighting
+  heuristic by hand. Not yet tried.
 
 ### Joint (simultaneous) least-squares fit vs. staged -- for Fy, checking whether the Mz trend generalizes
 

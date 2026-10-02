@@ -16,6 +16,21 @@ under-determined; this script is how you'd check whether that's also
 true elsewhere, or whether the dFz stage specifically has room to
 improve from joint fitting).
 
+Compares three variants against the same real data:
+  1. staged      -- the actual production fit (pacejka.fitters.mz)
+  2. joint       -- all coefficients fit simultaneously, plain
+                     (unweighted) least squares
+  3. weighted    -- same joint fit, but each condition's residual is
+                     divided by that condition's own peak |Mz| first
+
+(2) was the original experiment here: it fixed Mz's badly
+under-identified camber sweep but cost load-sweep accuracy, likely
+because an unweighted objective lets the highest-amplitude condition
+(250 lbf) dominate the sum of squares at lower-amplitude conditions'
+expense. (3) tests whether normalizing that away recovers the
+load-sweep accuracy without losing the camber-sweep win. See
+OPTIMIZATION_NOTES.md for the running results.
+
 This does NOT modify pacejka/fitters/mz.py or anything the deployed app
 uses -- it imports that module's field/bound tables for a fair
 side-by-side comparison, and pacejka.model's public mz_pure/
@@ -88,7 +103,7 @@ def _eval_mz(points, fy_derived, fz0_prime, ro, coeffs: MzCoefficients):
     ]
 
 
-def fit_mz_jointly(base, load_sweep, camber_sweep, fy_coefficients, ro) -> MzFitResult:
+def fit_mz_jointly(base, load_sweep, camber_sweep, fy_coefficients, ro, weighted: bool = False) -> MzFitResult:
     """All non-deferred Mz coefficients, fit in one simultaneous
     least_squares call against every tested condition at once -- no
     staging, no frozen-from-a-previous-stage coefficients.
@@ -98,6 +113,15 @@ def fit_mz_jointly(base, load_sweep, camber_sweep, fy_coefficients, ro) -> MzFit
     apples: same coefficients free, same bounds, same deferred cross
     terms fixed at 0.0, same initial guess per field. The only thing
     that differs is *when* each coefficient is allowed to move.
+
+    `weighted=True` divides each condition's residual by that condition's
+    own peak |Mz| before the optimizer sums squares, so a high-load
+    condition's large absolute signal can't dominate the objective and
+    starve a low-load (or otherwise small-amplitude) condition of fitting
+    attention -- see OPTIMIZATION_NOTES.md's 2026-10-02 entry, where the
+    plain (unweighted) joint fit traded Mz's load-sweep accuracy for its
+    camber-sweep accuracy. `weighted=False` (the default) reproduces that
+    original unweighted comparison unchanged.
     """
     fz0_prime = base.fz_n
     all_points = [base] + list(load_sweep) + list(camber_sweep)
@@ -123,11 +147,18 @@ def fit_mz_jointly(base, load_sweep, camber_sweep, fy_coefficients, ro) -> MzFit
     s_hf = np.concatenate([np.full_like(p.alpha_rad, d[2]) for p, d in zip(all_points, fy_derived)])
     fy_og0 = np.concatenate([d[3] for d in fy_derived])
 
+    if weighted:
+        weights = np.concatenate([
+            np.full_like(p.alpha_rad, 1.0 / max(np.max(np.abs(p.mz_nm)), 1e-9)) for p in all_points
+        ])
+    else:
+        weights = np.ones_like(target_mz_nm)
+
     def residuals(x):
         values = dict(fixed_values)
         values.update(zip(free_fields, x))
         mz = mz_pure(fz_n, fz0_prime, ro, gamma_star, alpha_rad, cos_alpha_p, fy_cy, fy_by, s_hf, fy_og0, MzCoefficients(**values))
-        return mz - target_mz_nm
+        return (mz - target_mz_nm) * weights
 
     x0 = [_MZ_P0[name] for name in free_fields]
     lb, ub = zip(*free_bounds)
@@ -169,44 +200,50 @@ def main():
     ]
     ro = 9 * 0.0254
 
-    joint_mz = fit_mz_jointly(base, load_sweep, camber_sweep, staged.fy.coefficients, ro)
+    joint_mz = fit_mz_jointly(base, load_sweep, camber_sweep, staged.fy.coefficients, ro, weighted=False)
     joint_result = replace(staged, mz=joint_mz)
+    weighted_mz = fit_mz_jointly(base, load_sweep, camber_sweep, staged.fy.coefficients, ro, weighted=True)
+    weighted_result = replace(staged, mz=weighted_mz)
 
     staged_table = fit_quality_table(staged)
     joint_table = fit_quality_table(joint_result)
+    weighted_table = fit_quality_table(weighted_result)
     staged_mz = staged_table[staged_table["quantity"] == "Mz"].set_index("condition")
     joint_mz_table = joint_table[joint_table["quantity"] == "Mz"].set_index("condition")
+    weighted_mz_table = weighted_table[weighted_table["quantity"] == "Mz"].set_index("condition")
 
-    print(f"\nMz fit quality: staged (production) vs. joint, {compound} {diameter_in}x{width_in}")
-    print(f"{'condition':<14}{'staged R2':>12}{'joint R2':>12}{'staged RMSE':>14}{'joint RMSE':>12}")
+    print(f"\nMz fit quality: staged vs. joint (unweighted) vs. joint (weighted), {compound} {diameter_in}x{width_in}")
+    print(f"{'condition':<14}{'staged R2':>12}{'joint R2':>12}{'weighted R2':>14}")
     for condition in staged_mz.index:
-        s, j = staged_mz.loc[condition], joint_mz_table.loc[condition]
-        print(f"{condition:<14}{s.r_squared:>12.4f}{j.r_squared:>12.4f}{s.rmse:>14.3f}{j.rmse:>12.3f}")
+        s, j, w = staged_mz.loc[condition], joint_mz_table.loc[condition], weighted_mz_table.loc[condition]
+        print(f"{condition:<14}{s.r_squared:>12.4f}{j.r_squared:>12.4f}{w.r_squared:>14.4f}")
 
     OUTPUT_DIR.mkdir(exist_ok=True)
-    _plot_comparison(staged, joint_result, compound, diameter_in, width_in)
+    _plot_comparison(staged, joint_result, weighted_result, compound, diameter_in, width_in)
 
 
 _PALETTE = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"]
 
 
-def _plot_comparison(staged, joint_result, compound, diameter_in, width_in):
+def _plot_comparison(staged, joint_result, weighted_result, compound, diameter_in, width_in):
     ftlb = 1 / (0.3048 * 4.448)
     fig = make_subplots(rows=1, cols=2, subplot_titles=("Load sweep", "Camber sweep"))
 
-    for col, conditions, staged_fits, joint_fits, label_fn in [
+    for col, conditions, staged_fits, joint_fits, weighted_fits, label_fn in [
         (1, staged.load_conditions, staged.mz.load_sweep_fit_mz_nm, joint_result.mz.load_sweep_fit_mz_nm,
-         lambda c: f"Fz={c.fz_nom:g} lbf"),
+         weighted_result.mz.load_sweep_fit_mz_nm, lambda c: f"Fz={c.fz_nom:g} lbf"),
         (2, staged.camber_conditions, staged.mz.camber_sweep_fit_mz_nm, joint_result.mz.camber_sweep_fit_mz_nm,
-         lambda c: f"IA={c.ia_nom:g} deg"),
+         weighted_result.mz.camber_sweep_fit_mz_nm, lambda c: f"IA={c.ia_nom:g} deg"),
     ]:
-        for i, (condition, staged_fit, joint_fit) in enumerate(zip(conditions, staged_fits, joint_fits)):
+        for i, (condition, staged_fit, joint_fit, weighted_fit) in enumerate(
+            zip(conditions, staged_fits, joint_fits, weighted_fits)
+        ):
             color = _PALETTE[i % len(_PALETTE)]
             label = label_fn(condition)
             sa_deg = condition.mz_splines.sa_grid_deg
             fig.add_trace(
                 go.Scatter(x=sa_deg, y=condition.mz_splines.mz, mode="lines", name=f"{label} smoothed",
-                           line=dict(color=color, width=1, dash="dot"), opacity=0.4, legendgroup=label),
+                           line=dict(color=color, width=1, dash="dot"), opacity=0.35, legendgroup=label),
                 row=1, col=col,
             )
             fig.add_trace(
@@ -215,7 +252,12 @@ def _plot_comparison(staged, joint_result, compound, diameter_in, width_in):
                 row=1, col=col,
             )
             fig.add_trace(
-                go.Scatter(x=sa_deg, y=joint_fit * ftlb, mode="lines", name=f"{label} joint",
+                go.Scatter(x=sa_deg, y=joint_fit * ftlb, mode="lines", name=f"{label} joint (unweighted)",
+                           line=dict(color=color, width=1.5, dash="dashdot"), opacity=0.7, legendgroup=label),
+                row=1, col=col,
+            )
+            fig.add_trace(
+                go.Scatter(x=sa_deg, y=weighted_fit * ftlb, mode="lines", name=f"{label} joint (weighted)",
                            line=dict(color=color, width=2), legendgroup=label),
                 row=1, col=col,
             )
@@ -223,10 +265,13 @@ def _plot_comparison(staged, joint_result, compound, diameter_in, width_in):
         fig.update_yaxes(title_text="Mz (ft-lb)", row=1, col=col)
 
     fig.update_layout(
-        title=f"{compound} {diameter_in:g}x{width_in:g}: staged (dashed) vs. joint (solid) Mz fit; dotted = smoothed data",
-        width=1400, height=600,
+        title=(
+            f"{compound} {diameter_in:g}x{width_in:g}: staged (dash) vs. joint unweighted (dash-dot) "
+            "vs. joint weighted (solid) Mz fit; dotted = smoothed data"
+        ),
+        width=1500, height=650,
     )
-    out_path = OUTPUT_DIR / f"mz_joint_vs_staged_{compound}_{diameter_in:g}x{width_in:g}.png"
+    out_path = OUTPUT_DIR / f"mz_joint_weighted_vs_staged_{compound}_{diameter_in:g}x{width_in:g}.png"
     fig.write_image(out_path, scale=2)
     print(f"\nSaved plot to {out_path}")
 
