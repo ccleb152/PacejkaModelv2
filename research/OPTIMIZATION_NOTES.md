@@ -112,7 +112,65 @@ the setup from scratch.
   camber (e.g. `Bz1`/`Bz4`, which `bt`'s formula couples with `Bz5`) stay
   free during the dIA stage instead of fully frozen -- hasn't been tried
   and may be a more promising direction than tuning a weighting
-  heuristic by hand. Not yet tried.
+  heuristic by hand. **Tried below -- this is the one that works.**
+
+### Partial-staged fit for Mz: Base+dIA jointly, dFz unchanged -- adopt this
+
+- **Script:** `research/mz_partial_staged_fit.py`
+- **Date:** 2026-10-05
+- **What:** Keeps the production dFz (load-sweep) stage completely
+  unchanged, including which coefficients it fits, their bounds, and
+  that it runs against the load sweep exactly as `pacejka.fitters.mz`
+  does. The only change: Base and dIA are no longer two sequential
+  stages (Base fit alone against the single reference condition, then
+  frozen before dIA ever runs) -- they're fit together, in one
+  `least_squares` call, against the reference condition *and* the full
+  camber sweep at once. Rationale: the real problem was never that the
+  dIA stage had too few parameters -- it's that the Base stage's 10
+  coefficients were chosen using zero camber information, so by the time
+  dIA ran, it was stuck correcting around values that were never asked
+  to accommodate anything off-camber. Fitting Base+dIA together lets the
+  Base-stage coefficients themselves adjust for the camber sweep, not
+  just the dIA-stage add-on terms.
+- **Result: clear win, no meaningful trade-off.**
+
+  | Condition | Staged R² | Partial-staged R² |
+  |---|---|---|
+  | Fz=50 lbf | 0.699 | 0.686 (negligible) |
+  | Fz=100 lbf | 0.925 | 0.922 (negligible) |
+  | Fz=150 lbf | 0.966 | 0.964 (negligible) |
+  | Fz=200 lbf | 0.978 | 0.975 (negligible) |
+  | Fz=250 lbf | 0.986 | 0.985 (negligible) |
+  | IA=2 deg | 0.894 | **0.970** |
+  | IA=4 deg | 0.750 | **0.971** |
+
+  Every load-sweep condition is within ~0.001-0.013 R² of the staged
+  fit -- visually indistinguishable in the comparison plot. Both camber
+  conditions improve dramatically, and land *slightly better* than the
+  full joint fit did (0.970/0.971 here vs. 0.965/0.961 for the plain
+  joint fit), while the full joint fit cost real load-sweep accuracy and
+  this doesn't.
+- **Why this works where plain joint and weighted joint didn't:** both
+  previous attempts put the load-sweep conditions into the same
+  optimization objective as the camber-sweep conditions, so the two
+  dimensions competed for the same fitting "attention" one way or
+  another (directly in the plain joint fit, via a weighting trade-off in
+  the weighted one). This hybrid never lets that competition happen --
+  the load sweep gets its own dedicated, unchanged optimization stage,
+  exactly like production. Only the camber dimension's own internal
+  split (Base frozen, then dIA alone) gets fixed, which is where the
+  actual under-identification was.
+- **Decision: recommended for promotion to `pacejka/fitters/mz.py`.**
+  This is the first experiment here that beats the staged fit's camber
+  sweep without giving up anything on the load sweep. Checked against
+  `tests/unit/test_regression.py`'s synthetic fixture (the one CI
+  actually exercises) too: every condition matches the staged fit to
+  within 0.0006 R² there -- the fixture's camber sweep was already
+  near-perfect under staging (no real under-identification to fix in
+  synthetic, noise-light data), so this is confirmation of "does no
+  harm," not a second case of the same win. Still worth running against
+  a second *real* tire's data before promoting, since R20 16x7.5 is the
+  only real-data case checked so far.
 
 ### Joint (simultaneous) least-squares fit vs. staged -- for Fy, checking whether the Mz trend generalizes
 
