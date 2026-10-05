@@ -46,8 +46,22 @@ def detect_fz_levels(
     round, at the given pressure/camber/speed condition (by default, the
     zero-camber load sweep every other detection/fit step is built on).
 
+    A candidate also needs at least 2 distinct values of the swept
+    channel (SL for Braking, SA for Cornering) to count as detected, not
+    just enough raw samples -- confirmed against real R20 18x6-10
+    BrakeDrive data, where Fz=100/350 lbf each matched >= min_samples
+    worth of a brief transient/calibration segment at 1-2 distinct SL
+    values, not an actual tested load level (the real sweep there is
+    exactly the four loads Raw_Data_Fitter_Fx_V2.m's own hardcoded
+    SweepVars.Fz=[50 150 200 250] tested). Without this, such a
+    candidate would be "detected" here only to crash downstream in
+    `pacejka.quality.check_condition_quality`/the spline fitter -- same
+    reasoning, applied one step earlier so a bogus load never gets this
+    far into the pipeline at all.
+
     Returns the detected loads in ascending order.
     """
+    swept_channel = "SL" if test_type == "Braking" else "SA"
     detected = []
     for fz_nom in candidates:
         try:
@@ -58,7 +72,7 @@ def detect_fz_levels(
             # fz_nom or p_nom isn't one ParaRange has a band for at all --
             # not "no data for this candidate", just "not checkable this way".
             continue
-        if len(segment) >= min_samples:
+        if len(segment) >= min_samples and segment[swept_channel].nunique() >= 2:
             detected.append(fz_nom)
     return sorted(detected)
 
@@ -85,6 +99,23 @@ def detect_camber_levels(
     transient between sweep segments.
 
     Returns the detected camber angles in ascending order.
+
+    A rounded cluster passing `min_samples` here is necessary but not
+    sufficient: the rounding bucket is `round_to_deg` wide (0.5 deg on
+    either side by default), much wider than `para_range`'s real
+    Cornering/Braking IA acceptance band (`ia_nom +/- 0.075` deg), so a
+    transient reading while the rig settles between two real camber
+    levels can collect enough points in the coarse bucket to clear
+    `min_samples` while having almost none inside the tight band
+    `segment_condition` will actually use downstream -- confirmed
+    against real LCO 18x6-10 BrakeDrive data, where a spurious "IA=1 deg"
+    cluster (33 points in the +/-0.5 deg bucket, transitional data
+    between the real 0 and 2 deg sweeps) had only 5 points inside the
+    real +/-0.075 deg band, too few to fit. Each candidate is re-checked
+    with the same `ia_nom`/`min_samples` semantics `pacejka.pipeline`/
+    `pacejka.longitudinal_pipeline` will actually use, so a level that
+    wouldn't survive that downstream check is never reported as detected
+    in the first place.
     """
     segment = segment_condition(
         samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=math.nan, sa_nom=0.0, v_nom=v_nom, test_type=test_type
@@ -94,4 +125,13 @@ def detect_camber_levels(
 
     rounded = np.round(segment["IA"].to_numpy(dtype=float) / round_to_deg) * round_to_deg
     values, counts = np.unique(rounded, return_counts=True)
-    return sorted(float(v) for v, c in zip(values, counts) if c >= min_samples)
+    candidates = [float(v) for v, c in zip(values, counts) if c >= min_samples]
+
+    detected = []
+    for ia_nom in candidates:
+        real_segment = segment_condition(
+            samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=ia_nom, sa_nom=0.0, v_nom=v_nom, test_type=test_type
+        )
+        if len(real_segment) >= min_samples:
+            detected.append(ia_nom)
+    return sorted(detected)

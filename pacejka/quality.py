@@ -38,13 +38,19 @@ Severity = Literal["error", "warning"]
 # these means the round can't be fit meaningfully, not just "some other
 # channel is missing" -- see load_ttc_round, which already errors if
 # *none* of the broader CHANNEL_VARS are present; this is the narrower,
-# per-channel version of that check.
-REQUIRED_CHANNELS = ("FZ", "SA", "IA", "P", "V", "FY", "MZ")
+# per-channel version of that check. Keyed by test_type since a Cornering
+# round's sweep variable is SA (with FY/MZ as the fitted outputs) while a
+# Braking round's is SL (with FX as the fitted output) -- see
+# pacejka.fitters.fx.
+REQUIRED_CHANNELS = {
+    "Cornering": ("FZ", "SA", "IA", "P", "V", "FY", "MZ"),
+    "Braking": ("FZ", "SL", "IA", "P", "V", "FX"),
+}
 
-# A full cornering round is thousands of samples across every tested
-# condition; a run cut short after one or two sweeps is a tiny fraction
-# of that. This is deliberately conservative (a real full round is
-# usually >>1000) so it only fires on genuinely truncated files.
+# A full round is thousands of samples across every tested condition; a
+# run cut short after one or two sweeps is a tiny fraction of that. This
+# is deliberately conservative (a real full round is usually >>1000) so
+# it only fires on genuinely truncated files.
 MIN_TOTAL_SAMPLES = 500
 
 # A real cornering slip-angle sweep spans roughly +-12 deg (the fixed
@@ -52,6 +58,13 @@ MIN_TOTAL_SAMPLES = 500
 # A sweep that never gets past a few degrees peak-to-peak means the test
 # was cut off before completing its first pass.
 MIN_SA_SWEEP_RANGE_DEG = 15.0
+
+# A real braking/drive slip-ratio sweep spans roughly -0.16 to 0.14 (the
+# fixed evaluation grid in fitters/fx.py assumes this, SL_GRID). Same
+# "cut off before completing its first pass" reasoning as SA above, just
+# a much smaller native scale (slip ratio is dimensionless, typically
+# single digits of percent in normal use before saturating).
+MIN_SL_SWEEP_RANGE = 0.1
 
 # Below this many samples, a segmented condition is too sparse to spline-
 # fit meaningfully -- matches pacejka.detection's own DEFAULT_MIN_SAMPLES,
@@ -78,9 +91,15 @@ class QualityIssue:
 def check_round_quality(
     samples: pd.DataFrame,
     min_total_samples: int = MIN_TOTAL_SAMPLES,
+    test_type: str = "Cornering",
 ) -> list[QualityIssue]:
     """Whole-file checks, run right after loading a round and before any
-    condition is segmented out of it."""
+    condition is segmented out of it.
+
+    `test_type` selects which channels are required (see
+    `REQUIRED_CHANNELS`) -- "Cornering" (default, preserves prior
+    behavior) or "Braking".
+    """
     issues: list[QualityIssue] = []
 
     if len(samples) < min_total_samples:
@@ -93,7 +112,7 @@ def check_round_quality(
             )
         )
 
-    for channel in REQUIRED_CHANNELS:
+    for channel in REQUIRED_CHANNELS[test_type]:
         if channel not in samples.columns:
             issues.append(QualityIssue("error", f"Missing expected channel '{channel}'."))
             continue
@@ -119,6 +138,8 @@ def check_condition_quality(
     ia_nom: float,
     min_samples: int = MIN_CONDITION_SAMPLES,
     min_sa_range_deg: float = MIN_SA_SWEEP_RANGE_DEG,
+    test_type: str = "Cornering",
+    min_sl_range: float = MIN_SL_SWEEP_RANGE,
 ) -> list[QualityIssue]:
     """Checks for one already-segmented nominal (Fz, IA) condition.
 
@@ -129,6 +150,12 @@ def check_condition_quality(
     one condition's data. `condition_label` in each message identifies
     which (Fz, IA) condition the issue is about, since the pipeline runs
     this once per condition.
+
+    `test_type` ("Cornering", default, or "Braking") selects which swept
+    channel's range gets checked -- SA for Cornering (unchanged
+    behavior), SL for Braking, since a Braking condition's SA is pinned
+    near 0 (see pacejka.ranges._BRAKING_SA_BANDS) and SL is the one that
+    actually sweeps.
     """
     label = f"Fz={fz_nom:g} lbf, IA={ia_nom:g} deg"
     issues: list[QualityIssue] = []
@@ -144,18 +171,58 @@ def check_condition_quality(
         )
         return issues
 
-    sa = segment["SA"].dropna()
-    if not sa.empty:
-        sa_range = float(sa.max() - sa.min())
-        if sa_range < min_sa_range_deg:
+    swept_channel = "SL" if test_type == "Braking" else "SA"
+    swept = segment[swept_channel].dropna()
+    # A segment can clear min_samples on raw sample count while still
+    # being a single transient/calibration reading rather than a real
+    # sweep -- e.g. a brief step between braking-sweep conditions that
+    # happens to linger for >= min_samples ticks at one SL value. That
+    # has too few *distinct* x values for csaps to fit at all (it
+    # requires >= 2), which would otherwise crash deep inside the spline
+    # fitter rather than fail cleanly here -- see pacejka.pipeline's and
+    # pacejka.longitudinal_pipeline's "check quality before spline-
+    # fitting" note. Caught as an error (not just the range warning
+    # below), confirmed against real R20 18x6-10 BrakeDrive data where
+    # auto-detected Fz=100/350 lbf "load levels" turned out to be exactly
+    # this (1-2 distinct SL values each, not the actual 4-point load
+    # sweep the original SweepVars.Fz=[50 150 200 250] tested).
+    if swept.nunique() < 2:
+        issues.append(
+            QualityIssue(
+                "error",
+                f"{label}: only {swept.nunique()} distinct {swept_channel} value(s) "
+                f"in this condition's samples -- too few to fit a sweep against "
+                f"(need at least 2). This looks like a transient/calibration "
+                f"segment that happened to match the acceptance band, not a "
+                f"condition that was actually swept.",
+            )
+        )
+        return issues
+
+    if test_type == "Braking":
+        sl_range = float(swept.max() - swept.min())
+        if sl_range < min_sl_range:
             issues.append(
                 QualityIssue(
                     "warning",
-                    f"{label}: the slip-angle sweep only spans {sa_range:.1f} deg "
-                    f"peak-to-peak -- a full cornering sweep is normally "
-                    f">= {min_sa_range_deg:g} deg. This condition's data may be an "
+                    f"{label}: the slip-ratio sweep only spans {sl_range:.3f} "
+                    f"peak-to-peak -- a full braking/drive sweep is normally "
+                    f">= {min_sl_range:g}. This condition's data may be an "
                     f"incomplete sweep rather than a full one.",
                 )
             )
+        return issues
+
+    sa_range = float(swept.max() - swept.min())
+    if sa_range < min_sa_range_deg:
+        issues.append(
+            QualityIssue(
+                "warning",
+                f"{label}: the slip-angle sweep only spans {sa_range:.1f} deg "
+                f"peak-to-peak -- a full cornering sweep is normally "
+                f">= {min_sa_range_deg:g} deg. This condition's data may be an "
+                f"incomplete sweep rather than a full one.",
+            )
+        )
 
     return issues

@@ -96,15 +96,24 @@ needed before anything else can be golden-tested meaningfully):
 9. `tiremodelV2` orchestration logic → becomes the Streamlit page flow
    (file selection, FX/FY dispatch, calling into steps 7–8, plotting).
 
-**Phase 2 — longitudinal pipeline (Fx, Mx), future work per CLAUDE.md:**
-10. `Raw_Data_Fitter_Fx_V2`
-11. `Raw_Data_Fitter_Mx_V2`
-12. `Pacejka_Term_Finder_FX_V4_Redo` (depends on 10, step 3, and step 7's
-    output)
+**Phase 2 — longitudinal pipeline (Fx, Mx):**
+10. `Raw_Data_Fitter_Fx_V2` — **ported** (`pacejka/fitters/fx.py`'s
+    `fit_kappa_sweep`), confirmed with the user 2026-10-06. See
+    MODEL_CHANGES.md.
+11. `Raw_Data_Fitter_Mx_V2` — not started.
+12. `Pacejka_Term_Finder_FX_V4_Redo` — **pure-slip stages only ported**
+    (`pacejka/fitters/fx.py`'s `fit_fx_coefficients`, orchestrated by
+    `pacejka.longitudinal_pipeline.run_longitudinal_fit`). The
+    combined-slip Fx and combined-slip Fy stages are explicitly
+    deferred — both are fit from data at a single hardcoded `SA_vals =
+    0` in the original (CLAUDE.md quirk #24), the same
+    degenerate-single-value pattern as quirks #11/#15, so they likely
+    need new multi-SA combined-slip data collection before they can be
+    fit meaningfully, not just a translation.
 13. `Pacejka_Term_Finder_MX_V1` (depends on 11, step 7 and step 12's output
     — and note it's currently *disconnected* from the orchestrator, so
     porting it doesn't unblock anything else; lowest priority of all 11
-    files)
+    files) — not started.
 
 ---
 

@@ -22,6 +22,7 @@ import pandas as pd
 
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM
+from pacejka.longitudinal_pipeline import LongitudinalFitResult
 from pacejka.pipeline import CorneringFitResult
 
 
@@ -105,3 +106,31 @@ def fit_quality_rows(result: CorneringFitResult) -> list[FitQualityRow]:
 def fit_quality_table(result: CorneringFitResult) -> pd.DataFrame:
     """`fit_quality_rows` as a DataFrame, for display or CSV export."""
     return pd.DataFrame([dataclasses.asdict(row) for row in fit_quality_rows(result)])
+
+
+def fit_quality_rows_fx(result: LongitudinalFitResult) -> list[FitQualityRow]:
+    """Goodness-of-fit rows for one longitudinal (pure-slip Fx) fit:
+    across both the load sweep and the camber sweep, mirroring
+    `fit_quality_rows`'s Fy/Mz rows."""
+    rows: list[FitQualityRow] = []
+
+    for condition, fit_n in zip(result.load_conditions, result.fx.load_sweep_fit_fx_n):
+        rows.append(
+            _fit_quality_row(
+                "Fx", "load", f"Fz={condition.fz_nom:g} lbf",
+                condition.fx_splines.fx, fit_n / LBF_TO_N,
+            )
+        )
+    for condition, fit_n in zip(result.camber_conditions, result.fx.camber_sweep_fit_fx_n):
+        rows.append(
+            _fit_quality_row(
+                "Fx", "camber", f"IA={condition.ia_nom:g} deg",
+                condition.fx_splines.fx, fit_n / LBF_TO_N,
+            )
+        )
+    return rows
+
+
+def fit_quality_table_fx(result: LongitudinalFitResult) -> pd.DataFrame:
+    """`fit_quality_rows_fx` as a DataFrame, for display or CSV export."""
+    return pd.DataFrame([dataclasses.asdict(row) for row in fit_quality_rows_fx(result)])

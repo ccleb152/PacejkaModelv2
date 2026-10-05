@@ -26,6 +26,7 @@ import numpy as np
 
 _EPSILON_Y = 0.1
 _EPSILON_K = 0.1
+_EPSILON_X = 0.001
 
 
 @dataclass(frozen=True)
@@ -281,3 +282,81 @@ def mz_pure(fz, fz0_prime, ro, gamma_star, alpha_star, cos_alpha_p, fy_cy, fy_by
     mzo_p = -trail * fy_og0
     mzro = dr * np.cos(cr * np.arctan(br * alpha_r)) * cos_alpha_p
     return mzo_p + mzro
+
+
+@dataclass(frozen=True)
+class FxCoefficients:
+    """Fitted Magic Formula pure-longitudinal-slip coefficients.
+
+    Field names match the MATLAB `p0`/`ParameterList` `Variable` strings
+    (`Pacejka_Term_Finder_FX_V4_Redo.m`'s pure-slip stages). Unlike
+    `FyCoefficients`' `py1..py5` (used by `fy_terms`'s pressure term, just
+    never *fit* by any current stage -- see its docstring), this file's
+    `px1..px4` pressure-deviation coefficients are declared in `p0` and
+    carried through the whole Base/dFz/dIA/CombBase/... parameter-grouping
+    machinery, but never referenced by *any* fitting-stage formula
+    (`Base.F_x`, `dFzFit.F_x`, `dIAFit.F_x` have no `px`/`dpi` term at
+    all) -- more thoroughly dead than the Fy equivalent, not just unfit.
+    Omitted here entirely rather than carried as inert fields; `fx_pure`
+    has no pressure term to match.
+
+    `gamma_rad` in `fx_pure` is the raw camber angle in radians, not
+    `sin(camber)` like `FyCoefficients`/`fy_terms`' `gamma_star` -- this
+    matches the MATLAB source's own `gamma = 2*pi/180` (a literal radian
+    value, never passed through `sin`) exactly. Preserved as-is: there's
+    no standard MF-Tire pure-longitudinal-slip camber term to compare
+    against (camber doesn't enter the standard pure-Fx equation at all),
+    so this is this file's own, non-standard addition, not a translation
+    bug to "fix" by matching Fy's convention.
+    """
+
+    Cx1: float
+    Dx1: float
+    Dx2: float
+    Dx3: float
+    Ex1: float
+    Ex2: float
+    Ex3: float
+    Ex4: float
+    Hsx1: float
+    Hsx2: float
+    Kx1: float
+    Kx2: float
+    Kx3: float
+    Vsx1: float
+    Vsx2: float
+
+
+def fx_pure(fz, fz0_prime, gamma_rad, kappa, coeffs: FxCoefficients):
+    """Pure-longitudinal-slip Magic Formula longitudinal force Fx0.
+
+    `fz`/`fz0_prime` mean the same as in `fy_terms` (`dfz = (fz -
+    fz0_prime) / fz0_prime`). `gamma_rad` is the raw camber angle in
+    radians (see `FxCoefficients`' docstring on why this isn't
+    `sin(camber)`). `kappa` is the longitudinal slip ratio (dimensionless,
+    unconverted -- same units as the MATLAB `SL` channel and this
+    equation's own `kappa`).
+
+    Unifies the term finder's three per-stage closures (`Base.F_x`,
+    `dFzFit.F_x`, `dIAFit.F_x`) into one equation, the same way `fy_terms`
+    unifies Fy's Base/dFz/dIA closures: setting `gamma_rad=0` and
+    `fz=fz0_prime` collapses this to `Base.F_x`; `gamma_rad=0` alone
+    collapses it to `dFzFit.F_x`; the full equation matches `dIAFit.F_x`
+    exactly (verified field-by-field against each stage's closure -- e.g.
+    `dIAFit.mu_x`'s `(Xb(2)+Xf_out(1)*dfz)*(1-XIA(1)*gamma^2)` is this
+    function's `mu_x` with `Dx1=Xb(2)`, `Dx2=Xf_out(1)`, `Dx3=XIA(1)`).
+    """
+    p = coeffs
+    dfz = (fz - fz0_prime) / fz0_prime
+
+    s_hx = p.Hsx1 + p.Hsx2 * dfz
+    mu_x = (p.Dx1 + p.Dx2 * dfz) * (1 - p.Dx3 * gamma_rad**2)
+    kappa_x = kappa + s_hx
+    cx = p.Cx1
+    dx = mu_x * fz
+    ex = (p.Ex1 + p.Ex2 * dfz + p.Ex3 * dfz**2) * (1 - p.Ex4 * np.sign(kappa))
+    kx = fz * (p.Kx1 + p.Kx2 * dfz) * np.exp(p.Kx3 * dfz)
+    bx = kx / (cx * dx + _EPSILON_X)
+    s_vx = fz * (p.Vsx1 + p.Vsx2 * dfz)
+
+    return dx * np.sin(cx * np.arctan(bx * kappa_x - ex * (bx * kappa_x - np.arctan(bx * kappa_x)))) + s_vx
