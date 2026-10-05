@@ -180,6 +180,44 @@ the setup from scratch.
   where camber was already fine and it still improved the load sweep
   slightly. No regression found on any condition, either tire. Ready to
   promote.
+- **Why R20's load sweep dips very slightly (and why LCO's doesn't):**
+  traced by comparing the actual fitted Base-stage coefficients between
+  the two approaches on R20. Several shift dramatically once Stage 1 has
+  to also explain the camber sweep, not just the single reference
+  condition -- most strikingly `Bz9`/`Bz10` (the residual-moment
+  stiffness term, `Br = Bz9 + Bz10*Cy*By`): -3.460 -> +2.258 (sign flip)
+  and -1.518 -> ~0.000 respectively. These two have no dIA-stage
+  correction term at all (`Bz9`/`Bz10` aren't in `_DIA_FIELDS`), so when
+  camber data enters Stage 1, they carry the *entire* burden of
+  explaining the residual moment's camber sensitivity themselves, with
+  only however much `Cy*By` happens to shift with camber (via the FY
+  fit) as their lever -- a big ask for two numbers, hence the large
+  swing. `Ez1` (3.440 -> 6.702) and `Dz6` (sign flip) move substantially
+  too, even though those *do* have dIA-stage partners (`Ez5`;
+  `Dz8`/`Dz10`), because joint fitting gives the optimizer the freedom to
+  let the Base value itself absorb some of the camber-sensitivity work
+  instead of leaving all of it to the dIA add-on terms.
+
+  Those shifted values then get frozen and handed to the dFz stage,
+  which has only 6 free parameters to rebuild the whole load sweep
+  around this new foundation instead of the original, zero-camber-only
+  one. Since the load sweep is evaluated entirely at zero camber, it
+  can't quite recreate what a Base fit singularly dedicated to that one
+  condition achieved -- hence the small (0.001-0.013 R²) dip on R20.
+
+  This tradeoff isn't inherently one-directional, which is why LCO
+  didn't show it (and even improved slightly): whether folding camber
+  data into the Base fit costs the load sweep anything depends on
+  whether that tire's zero-camber-only Base fit was already close to the
+  broader (camber-inclusive) optimum, or was itself a bit overfit to
+  that one segment's own noise. For R20 there's a small genuine conflict
+  between "best possible zero-camber fit" and "best compromise across
+  all camber angles." For LCO there apparently isn't much of one --
+  folding in camber data produced a better-conditioned Base fit overall,
+  which helped the dFz stage too. Either way the net effect observed so
+  far is small and never a real regression, but this is worth knowing
+  before assuming the pattern always goes one way on a tire not yet
+  checked.
 
 ### Joint (simultaneous) least-squares fit vs. staged -- for Fy, checking whether the Mz trend generalizes
 
