@@ -102,21 +102,31 @@ yet ported) should be scoped when we get there:
   checked against the original MATLAB output on the same input, within a
   tolerance, before it's considered done. See "Golden testing" below and
   MIGRATION_PLAN.md §5 for the fixture format and capture workflow.
-- **Longitudinal (Fx / braking) support is a future extension.** The
-  existing MATLAB code already contains an Fx/braking pipeline
-  (`Raw_Data_Fitter_Fx_V2`, `Pacejka_Term_Finder_Data_Compiler_V1`,
-  `Pacejka_Term_Finder_FX_V4_Redo`, `Pacejka_Term_Finder_MX_V1`) but it is
-  less mature than the cornering (Fy/Mz) pipeline — `Mx` isn't even wired
-  into `tiremodelV2.m` (its call is commented out). **Working assumption:**
-  Phase 1 of the port covers the cornering pipeline only (segmentation →
-  `ParaRange` → `Raw_Data_Fitter_Fy`/`Fy` term finder →
-  `Raw_Data_Fitter_Mz`/`Mz` term finder). The package layout reserves a
-  `fitters/fx.py` and `fitters/mx.py` module and a `Longitudinal` config
-  section so the Fx/Mx pipeline slots in later without restructuring, but
-  their fitting logic is *not* ported in Phase 1. **Confirm this reading
-  with the user before starting** — "longitudinal" could also just mean
-  "don't reach for new capability beyond what MATLAB already does," in
-  which case Fx/Mx get ported too, just after Fy/Mz.
+- **Longitudinal (Fx / braking) support, Phase 2a status: pure-slip Fx is
+  ported; combined-slip Fx/Fy and Mx are not.** Confirmed with the user
+  (2026-10-06) to start Phase 2 scoped to pure-slip Fx only first —
+  `pacejka/fitters/fx.py`'s `fit_kappa_sweep` (leaf, port of
+  `Raw_Data_Fitter_Fx_V2.m`) and `fit_fx_coefficients` (port of
+  `Pacejka_Term_Finder_FX_V4_Redo.m`'s pure-slip Base/dFz/dIA stages only,
+  using the same multi-load/multi-camber-sweep fix and partial-staged
+  hybrid already promoted for Fy/Mz), plus `pacejka.longitudinal_pipeline.
+  run_longitudinal_fit` orchestrating it the same way `pacejka.pipeline.
+  run_cornering_fit` does for Fy/Mz. Real `RawDataFiles/BrakeDrive/` data
+  exists for the 18x6-10 R20/LCO/R25B tires (Rounds 6/9) and is what this
+  was verified against.
+
+  **Explicitly deferred, not started:** `Pacejka_Term_Finder_FX_V4_Redo.m`'s
+  combined-slip Fx and combined-slip Fy stages (how a nonzero slip angle
+  reduces longitudinal force, and vice versa) — both are fit from data at
+  a single hardcoded `SA_vals = 0` in the original, the same degenerate
+  single-value-sweep pattern as quirks #11/#15, so they likely can't be
+  fit meaningfully without first collecting real multi-SA combined-slip
+  data (nothing in the current pipeline does this yet — see quirk #24).
+  `Raw_Data_Fitter_Mx_V2.m`/`Pacejka_Term_Finder_MX_V1.m` (overturning
+  moment) are also still unported — lowest priority per
+  MIGRATION_PLAN.md §2, and `Mx` was already disconnected from
+  `tiremodelV2.m` in the original. The package layout still reserves
+  `fitters/mx.py` for this.
 
 ## Known MATLAB quirks — preserve intent, fix the bug, keep golden tests honest
 
@@ -364,6 +374,71 @@ correct just because they're the original:
    code word" heuristic — a future round's second token might genuinely
    be a different compound, so only this specific, confirmed case is
    normalized.
+20. **`Pacejka_Term_Finder_FX_V4_Redo.m`'s dFz stage is gated by a
+   hardcoded single value in a way that would crash, not just silently
+   mis-fit, for most `Fz_nom` values.** `Fz_vals = [50]` is hardcoded at
+   the top of the file (same pattern as quirk #7), but unlike FY's
+   equivalent, the dFz `lsqcurvefit` call here only runs *inside*
+   `if Fz_vals(n) == Fz_nom`. For any `Fz_nom` other than 50, that `if`
+   body (including the assignment to `Xf_out`) never executes, and the
+   very next section (dIA) unconditionally references `Xf_out` — an
+   undefined-variable error in MATLAB, not just a wrong fit. Confirmed
+   by reading the control flow, not run (no MATLAB access). The Python
+   port (`pacejka/fitters/fx.py`'s `fit_fx_coefficients`) has no
+   equivalent gate to preserve: it fits whatever `load_sweep` the caller
+   passes in, with no hardcoded condition check.
+21. **The same file's dIA stage has two independent bugs layered on top
+   of each other: a single hardcoded camber value, and a load value that
+   doesn't match the one the Base/dFz stages just used.** `gamma_vals =
+   [2]` hardcodes a single nonzero camber (milder than FY's dIA quirk
+   #11 — Fx's `dIAFit.mu_x` multiplies `gamma^2`, which is nonzero at
+   2°, so the stage's one free coefficient `Dx3` does get *some* signal,
+   unlike FY's exactly-zero-effect case). Separately, `Fz_vals = [150]`
+   is hardcoded here independent of `Fz_nom` — unlike this file's own
+   Base/dFz stages (which key off `Fz_nom` directly) and unlike FY/MZ's
+   dIA stages (which correctly reuse the same reference load throughout)
+   — so the original silently fits its camber-sensitivity term at
+   Fz=150 lbf regardless of what load `Fz_nom` actually was. Fixed in
+   `pacejka/fitters/fx.py`'s `fit_fx_coefficients` the same way as
+   FY/MZ: a real multi-camber `camber_sweep` recorded at the same
+   reference load (`base.fz_n`) as everything else, not a second,
+   independently-hardcoded load.
+22. **The dIA stage also has the same unit-conversion bug as quirk #10,
+   independently reintroduced.** The Base and dFz stages' `ydata` are
+   both converted from lbf to N (`.*4.448`) before fitting, but the dIA
+   stage's `ydata` (line 389,
+   `SplineData.P12.SA0.IA2.(FxVar)`) is not — even though `dIAFit.F_x`
+   still computes force in N. Fixed the same way as quirk #10:
+   `pacejka/fitters/fx.py`'s `sweep_point_from_kappa_sweep` always
+   converts FX to N, regardless of which stage ends up consuming the
+   point.
+23. **`Pacejka_Term_Finder_FX_V4_Redo.m`'s `px1..px4` (pressure-deviation)
+   coefficients are more thoroughly dead than FY's `py1..py5`.** They're
+   declared in `p0`, assigned a `Pstat` group, and carried all the way
+   through the `BaseList`/`dPiList` parameter-table bookkeeping (always
+   written out as `0`/`0`/`0`, never fit) — but unlike FY's `py1..py5`
+   (used by `fy_terms`'s pressure term, just never *fit* by any current
+   stage), `px1..px4` aren't referenced by *any* of this file's fitting-
+   stage formulas (`Base.F_x`, `dFzFit.F_x`, `dIAFit.F_x` have no
+   `px`/`dpi` term at all). `pacejka.model.FxCoefficients` omits them
+   entirely rather than carrying inert fields, and `fx_pure` has no
+   pressure term to match — there's nothing for one to match.
+24. **The combined-slip Fx and combined-slip Fy stages (not yet ported —
+   see CLAUDE.md's "Longitudinal (Fx / braking) support" status note)
+   are fit from data at a single hardcoded `SA_vals = 0`.** Same
+   degenerate single-value-sweep pattern as quirks #11/#15: the
+   "combined slip" weighting terms (`G_xa`, `G_yk`) are meant to capture
+   how force at one slip channel is reduced by slip in the *other*
+   channel, which needs data swept across multiple nonzero slip-angle
+   values at various slip ratios — but `SA_vals = 0` means every
+   combined-slip fit in the original runs on pure-slip-angle-zero data,
+   making at least the slip-angle-dependent shift terms (`S_Hxa` in
+   `CBaseFit`, similarly for the lateral side) unidentifiable from alpha
+   dependence the same way FY's dIA stage was unidentifiable from camber
+   dependence. Deferred as explicit future work rather than ported as a
+   literal (and likely unfixable without new data collection)
+   translation — confirmed with the user (2026-10-06) before starting
+   Phase 2, see MODEL_CHANGES.md.
 
 ## Migration workflow
 

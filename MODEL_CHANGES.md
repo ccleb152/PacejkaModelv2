@@ -19,6 +19,130 @@ and when.
 
 ---
 
+## 2026-10-06 -- Add pure-slip Fx (longitudinal) fitting pipeline
+
+**What:** Ported the pure-longitudinal-slip portion of
+`Pacejka_Term_Finder_FX_V4_Redo.m` and `Raw_Data_Fitter_Fx_V2.m`:
+`pacejka.model.fx_pure`/`FxCoefficients` (the shared equation, unifying
+the original's Base/dFz/dIA closures the same way `fy_terms` already
+unifies FY's), `pacejka.fitters.fx.fit_kappa_sweep` (SL -> FX/FY/MZ/Vc
+smoothing splines) and `fit_fx_coefficients` (the Base/dFz/dIA term
+finder), and `pacejka.longitudinal_pipeline.run_longitudinal_fit`
+(orchestration, mirroring `pacejka.pipeline.run_cornering_fit`).
+`pacejka.quality` gained a `test_type` parameter so `check_round_quality`
+/`check_condition_quality` can validate a Braking round (requiring
+FX/SL instead of FY/MZ, checking the SL sweep range instead of SA)
+without changing default (Cornering) behavior.
+
+Scoped to pure-slip Fx only, confirmed with the user before starting:
+the original file's combined-slip Fx and combined-slip Fy stages are
+deferred, not ported even as a literal translation -- see CLAUDE.md
+quirk #24.
+
+Applied the same fixes already made for Fy/Mz, found independently in
+this file:
+- The dFz stage's hardcoded `Fz_vals = [50]`, gated by `if Fz_vals(n) ==
+  Fz_nom` -- more severe than FY's quirk #7, since a non-50 `Fz_nom`
+  would hit an undefined-variable error in the original, not just a
+  silent wrong-condition fit. Fixed with a real multi-load `load_sweep`,
+  same as FY/MZ. See CLAUDE.md quirk #20.
+- The dIA stage's hardcoded `gamma_vals = [2]` (single camber, milder
+  than FY's exactly-zero-effect quirk #11 since Fx's camber term is
+  `gamma**2`-weighted and 2 deg isn't zero) *and* its independently
+  hardcoded `Fz_vals = [150]` that doesn't match whatever `Fz_nom` the
+  Base/dFz stages just used. Fixed with a real multi-camber
+  `camber_sweep` recorded at the same reference load as everything
+  else. See CLAUDE.md quirk #21.
+- The dIA stage's missing lbf->N conversion on its `ydata` (same bug
+  shape as FY's quirk #10, independently present here). Fixed by always
+  converting in `sweep_point_from_kappa_sweep`. See CLAUDE.md quirk #22.
+- `px1..px4` (pressure-deviation coefficients) are declared in the
+  original's `p0` but never referenced by any of this file's fitting
+  formulas at all -- more thoroughly dead than FY's `py1..py5` (which
+  are at least used, just never fit). Omitted entirely from
+  `FxCoefficients` rather than carried as inert fields. See CLAUDE.md
+  quirk #23.
+
+Applied the partial-staged hybrid (Base+dIA fit jointly, dFz kept as its
+own separate stage) from the start, rather than porting the fully-staged
+original first and promoting later -- the same investigation that
+justified this for Fy/Mz (see the entry below) applies here for the same
+structural reason (Base's own coefficients need to see real camber data
+to generalize to it), and there was no reason to re-derive that
+conclusion from scratch for a third equation.
+
+**Why:** The user asked to extend the port into longitudinal (braking/
+drive) data fitting, confirming (after reviewing the combined-slip
+stages' SA=0 degeneracy) that pure-slip Fx should be scoped first, with
+combined-slip Fx/Fy explicitly deferred rather than attempted against
+data that can't support it.
+
+**Verified with:** `tests/unit/test_fx_fitter.py` (synthetic slip-ratio
+sweep, smoothing-spline recovery) and `tests/unit/test_fx_term_finder.py`
+(synthetic Base/dFz/dIA fit, regression tests for the Fz_vals=[50] gate
+and the Ex3 zero-width pin). One test-authoring note: the dFz stage's
+`Kx2`/`Kx3` coefficients (both shape how `K_x` scales with `dfz` -- one
+additive, one exponential) are genuinely correlated from this file's
+generic, non-domain-tuned `p0`, the same class of equation/initial-guess
+sensitivity CLAUDE.md quirk #18 and the Mz term finder's test module
+already describe for Mz -- a synthetic "true" `Kx3` of the opposite sign
+from `p0` sent the optimizer to a badly-fitting local minimum in testing;
+the test fixture's true coefficients were chosen close in sign/magnitude
+to `p0` to avoid exercising that unrelated sensitivity. Full suite:
+**124 passed** (117 before this change + 7 new).
+
+Also run end-to-end against real `RawDataFiles/BrakeDrive/` data for all
+three 18x6-10 tires (R20, LCO, R25B) via `run_longitudinal_fit` +
+`pacejka.regression.fit_quality_table_fx` (new, mirroring
+`fit_quality_table`). This surfaced two real pre-existing robustness
+gaps in `pacejka.detection` (used identically by the Fy/Mz cornering
+pipeline, not new to Fx), both fixed the same way -- a candidate level
+is only reported as "detected" if it would actually survive the
+downstream per-condition check, not just a coarser detection-time one:
+- `detect_fz_levels` accepted any candidate with >= `min_samples` raw
+  samples, with no check that the swept channel (SL/SA) had more than
+  one distinct value. On R20's BrakeDrive data, Fz=100 and Fz=350 lbf
+  each matched a brief transient/calibration segment (1-2 distinct SL
+  values, well short of a real sweep) that happened to clear
+  `min_samples` on sample count alone, crashing `csaps` downstream
+  (`'xdata' must contain at least 2 data points'`) once the pipeline
+  tried to spline-fit it. Fixed by also requiring `nunique() >= 2` on
+  the swept channel; `pacejka.quality.check_condition_quality` gained
+  the same check (as a hard error, not just the existing range warning)
+  as defense in depth for any caller that bypasses detection with an
+  explicit `fz_noms`.
+- `detect_camber_levels` rounds raw IA readings to the nearest degree
+  and accepts any bucket with >= `min_samples` points -- but that
+  rounding bucket (+/-0.5 deg by default) is much wider than
+  `para_range`'s real IA acceptance band (+/-0.075 deg), so a transient
+  reading while the rig settles between two real camber sweeps can clear
+  `min_samples` in the coarse bucket while having almost none in the
+  tight band `segment_condition` actually uses downstream. Confirmed on
+  LCO's BrakeDrive data: a spurious "IA=1 deg" cluster (33 points
+  rounded-bucket, real sweep was 0/2/4 deg) had only 5 points in the real
+  band -- enough to pass detection, not enough to fit, raising
+  downstream instead of being excluded at detection time. Fixed by
+  re-checking each rounded candidate with the real `ia_nom`/`min_samples`
+  semantics before reporting it as detected.
+
+With both fixes, all three tires auto-detect clean load/camber sweeps
+and fit well: LCO and R25B both land on the real 4-point load sweep
+(50/150/200/250 lbf) with R^2 >= 0.95 at every load and >= 0.998 at
+every camber. R20 additionally has real (not transient -- 2+ distinct
+SL values, not caught by either fix above) data at Fz=100 lbf, but its
+R^2 there (0.65) and at Fz=50 lbf (0.77) are noticeably worse than the
+150-250 lbf range (>= 0.996) or either of the other two tires' Fz=50
+fits -- flagged as an open item for the team to look into (possibly a
+genuinely noisier low-load condition in this specific round, or a
+dFz-stage identifiability issue specific to having 5 load points instead
+of 4), not something this change attempts to diagnose further.
+
+**Not changed:** The combined-slip Fx/Fy stages (deferred, quirk #24);
+`Raw_Data_Fitter_Mx_V2.m`/`Pacejka_Term_Finder_MX_V1.m` (still unported);
+anything in the Fy/Mz cornering pipeline.
+
+---
+
 ## 2026-10-06 -- Fit Base and dIA jointly instead of staged, for both Fy and Mz
 
 **What:** `pacejka/fitters/mz.py`'s `fit_mz_coefficients` and
