@@ -29,6 +29,7 @@ from pacejka.fitters.fx import (
     fit_fx_coefficients,
     fit_kappa_sweep,
     sweep_point_from_kappa_sweep,
+    trim_to_raw_domain,
 )
 from pacejka.quality import QualityIssue, check_condition_quality, check_round_quality
 from pacejka.segmenting import segment_condition
@@ -73,11 +74,20 @@ def _process_condition(samples, fz_nom, ia_nom, p_nom, v_nom) -> LongitudinalCon
     if errors:
         raise ValueError(" ".join(issue.message for issue in errors))
 
+    # Trim the spline evaluation to this condition's own real SL domain
+    # before anything downstream (fitting or quality scoring) sees it --
+    # see pacejka.fitters.fx.trim_to_raw_domain's docstring for why: the
+    # fixed SL_GRID can extend past what a specific condition's raw data
+    # actually covers, and csaps extrapolates unreliably past a spline's
+    # fitted domain.
+    sl = segment["SL"]
+    splines = trim_to_raw_domain(fit_kappa_sweep(segment), float(sl.min()), float(sl.max()))
+
     return LongitudinalConditionResult(
         fz_nom=fz_nom,
         ia_nom=ia_nom,
         samples=segment,
-        fx_splines=fit_kappa_sweep(segment),
+        fx_splines=splines,
         quality_issues=issues,
     )
 

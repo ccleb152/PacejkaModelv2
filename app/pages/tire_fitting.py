@@ -1,14 +1,16 @@
-"""The main tire-fitting page: load raw round data, run the cornering fit,
-view results, and export.
+"""The main tire-fitting page: load raw round data, run the cornering
+(Fy/Mz) or braking (pure-slip Fx) fit, view results, and export.
 
 Registered as a page (with an explicit title) by app/streamlit_app.py's
 st.navigation() call -- this module is never run directly by Streamlit.
 `sys.path`/`st.set_page_config` are handled once by that router, not here.
 
 Replaces `tiremodelV2.m`'s orchestration role (MIGRATION_PLAN.md step 9,
-the last piece of Phase 1): load one raw TTC round, run the multi-load/
-multi-camber cornering fit (`pacejka.pipeline.run_cornering_fit`), and
-show the resulting overlay plots and fitted coefficients.
+the last piece of Phase 1, extended in Phase 2 for Fx): load one raw TTC
+round, run the multi-load/multi-camber fit for whichever quantity the
+"Fit type" selector picks (`pacejka.pipeline.run_cornering_fit` or
+`pacejka.longitudinal_pipeline.run_longitudinal_fit`), and show the
+resulting overlay plots and fitted coefficients.
 
 Sections 2-4 (fit settings, results, export) are gated on `have_round`/
 `have_fit` flags rather than `st.stop()`, specifically so the Feedback
@@ -29,9 +31,10 @@ import streamlit as st
 from pacejka.colors import condition_hue, raw_smoothed_fit_colors
 from pacejka.config import DataRootNotConfigured, get_data_root, set_data_root
 from pacejka.feedback import submit_feedback
+from pacejka.fitters.fx import LBF_TO_N as FX_LBF_TO_N
 from pacejka.fitters.fy import LBF_TO_N
 from pacejka.fitters.mz import FTLB_TO_NM
-from pacejka.io.parameters import cornering_fit_to_dataframe
+from pacejka.io.parameters import cornering_fit_to_dataframe, longitudinal_fit_to_dataframe
 from pacejka.io.tire_catalog import (
     find_entries,
     list_compounds,
@@ -41,6 +44,7 @@ from pacejka.io.tire_catalog import (
     scan_raw_data_folder,
 )
 from pacejka.io.ttc_raw import load_ttc_round
+from pacejka.longitudinal_pipeline import run_longitudinal_fit
 from pacejka.pipeline import run_cornering_fit
 from pacejka.quality import check_round_quality
 
@@ -59,10 +63,13 @@ RAW_DATA_CATALOG_ROOT = Path(__file__).resolve().parent.parent.parent / "RawData
 # tracked file.
 FEEDBACK_ROOT = Path(__file__).resolve().parent.parent.parent / "Feedback"
 
-# Only Cornering-type files feed the current pipeline (Fx/braking is a
-# future extension per CLAUDE.md's Phase-1 scope) -- BrakeDrive files are
-# still cataloged (for that future work) but not offered here.
-CATALOG_TEST_TYPE = "Cornering"
+# Maps the page's own "Cornering"/"Braking" fit-mode choice to the two
+# different "test_type" vocabularies this app straddles: the pipeline
+# layer's (pacejka.ranges/pacejka.segmenting/pacejka.detection) "Cornering"/
+# "Braking", and pacejka.io.tire_catalog's catalog folder names
+# ("Cornering"/"BrakeDrive", matching RawDataFiles/'s actual subfolders).
+# See CLAUDE.md's note on this distinction.
+_CATALOG_TEST_TYPE_FOR_MODE = {"Cornering": "Cornering", "Braking": "BrakeDrive"}
 
 
 @st.cache_data
@@ -138,6 +145,20 @@ if change:
 # ---------------------------------------------------------------------------
 
 st.header("1. Load raw TTC round data")
+
+_FIT_MODES = ["Cornering", "Braking"]
+fit_mode = st.radio(
+    "Fit type",
+    _FIT_MODES,
+    index=_FIT_MODES.index(st.session_state.get("fit_mode", "Cornering")),
+    format_func=lambda m: "Cornering (Fy/Mz)" if m == "Cornering" else "Braking (Fx, pure-slip)",
+    horizontal=True,
+    help="Cornering fits lateral force and aligning moment vs. slip angle. "
+    "Braking fits pure-slip longitudinal force vs. slip ratio -- combined-slip "
+    "(lateral/longitudinal coupling) isn't fit yet, see CLAUDE.md.",
+)
+catalog_test_type = _CATALOG_TEST_TYPE_FOR_MODE[fit_mode]
+
 tab_database, tab_browse, tab_upload = st.tabs(["Tire database", "Browse folder", "Upload file"])
 
 with tab_database:
@@ -153,18 +174,18 @@ with tab_database:
                 for path, message in catalog.errors:
                     st.warning(f"{path.name}: {message}")
 
-        compounds = list_compounds(catalog.entries, test_type=CATALOG_TEST_TYPE)
+        compounds = list_compounds(catalog.entries, test_type=catalog_test_type)
         if not compounds:
-            st.info("No Cornering runs found in the tire database.")
+            st.info(f"No {catalog_test_type} runs found in the tire database.")
         else:
             col_compound, col_diameter, col_width = st.columns(3)
             compound = col_compound.selectbox("Compound", compounds)
-            diameters = list_diameters(catalog.entries, compound, test_type=CATALOG_TEST_TYPE)
+            diameters = list_diameters(catalog.entries, compound, test_type=catalog_test_type)
             diameter = col_diameter.selectbox("Diameter (in)", diameters)
-            widths = list_widths(catalog.entries, compound, diameter, test_type=CATALOG_TEST_TYPE)
+            widths = list_widths(catalog.entries, compound, diameter, test_type=catalog_test_type)
             width = col_width.selectbox("Width (in)", widths)
 
-            matches = find_entries(catalog.entries, compound, diameter, width, test_type=CATALOG_TEST_TYPE)
+            matches = find_entries(catalog.entries, compound, diameter, width, test_type=catalog_test_type)
             run_list = ", ".join(str(e.run) for e in matches if e.run is not None)
             st.caption(f"{len(matches)} run(s) found for this tire: #{run_list}")
 
@@ -219,7 +240,7 @@ if have_round:
         f"tireid={round_data.tireid!r}, {len(round_data.samples)} samples"
     )
 
-    round_level_issues = check_round_quality(round_data.samples)
+    round_level_issues = check_round_quality(round_data.samples, test_type=fit_mode)
     if round_level_issues:
         st.subheader("Data quality")
         if _show_quality_issues(round_level_issues):
@@ -258,19 +279,34 @@ if have_round and not blocked_by_quality:
 
     if st.button("Run Fit", type="primary"):
         try:
-            result = run_cornering_fit(
-                round_data.samples,
-                p_nom=p_nom,
-                v_nom=v_nom,
-                reference_fz_nom=reference_fz_nom,
-                fz_noms=fz_noms,
-                ia_degs=ia_degs,
-            )
+            if fit_mode == "Cornering":
+                result = run_cornering_fit(
+                    round_data.samples,
+                    p_nom=p_nom,
+                    v_nom=v_nom,
+                    reference_fz_nom=reference_fz_nom,
+                    fz_noms=fz_noms,
+                    ia_degs=ia_degs,
+                )
+            else:
+                result = run_longitudinal_fit(
+                    round_data.samples,
+                    p_nom=p_nom,
+                    v_nom=v_nom,
+                    reference_fz_nom=reference_fz_nom,
+                    fz_noms=fz_noms,
+                    ia_degs=ia_degs,
+                )
             st.session_state["fit_result"] = result
+            st.session_state["fit_mode"] = fit_mode
         except ValueError as exc:
             st.error(str(exc))
 
-    if "fit_result" in st.session_state:
+    # A fit_result left over from a previous run in the *other* mode (e.g.
+    # switched from Cornering to Braking without re-running) would otherwise
+    # be rendered by the wrong branch below -- only show results that match
+    # the currently selected fit_mode.
+    if "fit_result" in st.session_state and st.session_state.get("fit_mode") == fit_mode:
         result = st.session_state["fit_result"]
 
         # ---------------------------------------------------------------
@@ -294,11 +330,16 @@ if have_round and not blocked_by_quality:
                 _show_quality_issues(condition_warnings)
 
         def _sweep_overlay_figure(
-            conditions, raw_column, spline_attr, smoothed_attr, fit_curves, unit_divisor, label_fn, y_title,
-            show_types,
+            conditions, raw_x_column, raw_column, spline_attr, x_grid_attr, smoothed_attr, fit_curves,
+            unit_divisor, label_fn, x_title, y_title, show_types,
         ) -> go.Figure:
             """One Plotly figure overlaying raw scatter + smoothed spline + Pacejka
             fit curve for each condition in a load or camber sweep.
+
+            `raw_x_column`/`x_grid_attr` are the independent variable's column
+            name in `condition.samples` and attribute name on the spline object
+            -- "SA"/"sa_grid_deg" for Fy/Mz (vs. slip angle), "SL"/"sl_grid" for
+            Fx (vs. slip ratio).
 
             `show_types` is a set of any of {"Raw", "Smoothed", "Fit"} -- a trace
             is only added to the figure at all if its type is in that set, so
@@ -317,11 +358,12 @@ if have_round and not blocked_by_quality:
             for index, (condition, fit_curve) in enumerate(zip(conditions, fit_curves)):
                 label = label_fn(condition)
                 splines = getattr(condition, spline_attr)
+                x_grid = getattr(splines, x_grid_attr)
                 raw_color, smoothed_color, fit_color = raw_smoothed_fit_colors(condition_hue(index))
                 if "Raw" in show_types:
                     fig.add_trace(
                         go.Scatter(
-                            x=condition.samples["SA"],
+                            x=condition.samples[raw_x_column],
                             y=condition.samples[raw_column],
                             mode="markers",
                             name=f"{label} raw",
@@ -332,7 +374,7 @@ if have_round and not blocked_by_quality:
                 if "Smoothed" in show_types:
                     fig.add_trace(
                         go.Scatter(
-                            x=splines.sa_grid_deg,
+                            x=x_grid,
                             y=getattr(splines, smoothed_attr),
                             mode="lines",
                             name=f"{label} smoothed",
@@ -343,7 +385,7 @@ if have_round and not blocked_by_quality:
                 if "Fit" in show_types:
                     fig.add_trace(
                         go.Scatter(
-                            x=splines.sa_grid_deg,
+                            x=x_grid,
                             y=fit_curve / unit_divisor,
                             mode="lines",
                             name=f"{label} fit",
@@ -351,7 +393,7 @@ if have_round and not blocked_by_quality:
                             legendgroup=label,
                         )
                     )
-            fig.update_layout(xaxis_title="Slip angle (deg)", yaxis_title=y_title, legend_title="Condition")
+            fig.update_layout(xaxis_title=x_title, yaxis_title=y_title, legend_title="Condition")
             return fig
 
         # graph_key -> (display label used in the export multiselect, figure).
@@ -364,7 +406,7 @@ if have_round and not blocked_by_quality:
                 "Show",
                 ["Raw", "Smoothed", "Fit"],
                 default=["Raw", "Fit"],
-                help="Choose any combination -- applies to all four plots below. "
+                help="Choose any combination -- applies to every plot below. "
                 "You can still toggle individual conditions on/off by clicking "
                 "their legend entries.",
             )
@@ -372,20 +414,19 @@ if have_round and not blocked_by_quality:
         if not show_types:
             st.warning("Select at least one of Raw/Smoothed/Fit above to see the plots.")
 
-        if show_types:
+        if show_types and fit_mode == "Cornering":
             st.subheader("Fy vs. Slip Angle")
             col_fy_load, col_fy_camber = st.columns(2)
             with col_fy_load:
                 st.caption("Across normal load sweep (zero camber)")
                 fig = _sweep_overlay_figure(
                     result.load_conditions,
-                    "FY",
-                    "fy_splines",
-                    "fy",
+                    "SA", "FY",
+                    "fy_splines", "sa_grid_deg", "fy",
                     result.fy.load_sweep_fit_fy_n,
                     LBF_TO_N,
                     lambda c: f"Fz={c.fz_nom:g} lbf",
-                    "Fy (lbf)",
+                    "Slip angle (deg)", "Fy (lbf)",
                     show_types,
                 )
                 exportable_graphs["FY_LoadSweep"] = ("Fy vs. slip angle -- load sweep", fig)
@@ -394,13 +435,12 @@ if have_round and not blocked_by_quality:
                 st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
                 fig = _sweep_overlay_figure(
                     result.camber_conditions,
-                    "FY",
-                    "fy_splines",
-                    "fy",
+                    "SA", "FY",
+                    "fy_splines", "sa_grid_deg", "fy",
                     result.fy.camber_sweep_fit_fy_n,
                     LBF_TO_N,
                     lambda c: f"IA={c.ia_nom:g} deg",
-                    "Fy (lbf)",
+                    "Slip angle (deg)", "Fy (lbf)",
                     show_types,
                 )
                 exportable_graphs["FY_CamberSweep"] = ("Fy vs. slip angle -- camber sweep", fig)
@@ -412,13 +452,12 @@ if have_round and not blocked_by_quality:
                 st.caption("Across normal load sweep (zero camber)")
                 fig = _sweep_overlay_figure(
                     result.load_conditions,
-                    "MZ",
-                    "mz_splines",
-                    "mz",
+                    "SA", "MZ",
+                    "mz_splines", "sa_grid_deg", "mz",
                     result.mz.load_sweep_fit_mz_nm,
                     FTLB_TO_NM,
                     lambda c: f"Fz={c.fz_nom:g} lbf",
-                    "Mz (ft-lb)",
+                    "Slip angle (deg)", "Mz (ft-lb)",
                     show_types,
                 )
                 exportable_graphs["MZ_LoadSweep"] = ("Mz vs. slip angle -- load sweep", fig)
@@ -427,24 +466,59 @@ if have_round and not blocked_by_quality:
                 st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
                 fig = _sweep_overlay_figure(
                     result.camber_conditions,
-                    "MZ",
-                    "mz_splines",
-                    "mz",
+                    "SA", "MZ",
+                    "mz_splines", "sa_grid_deg", "mz",
                     result.mz.camber_sweep_fit_mz_nm,
                     FTLB_TO_NM,
                     lambda c: f"IA={c.ia_nom:g} deg",
-                    "Mz (ft-lb)",
+                    "Slip angle (deg)", "Mz (ft-lb)",
                     show_types,
                 )
                 exportable_graphs["MZ_CamberSweep"] = ("Mz vs. slip angle -- camber sweep", fig)
                 st.plotly_chart(fig, use_container_width=True)
 
+        elif show_types:  # fit_mode == "Braking"
+            st.subheader("Fx vs. Slip Ratio")
+            col_fx_load, col_fx_camber = st.columns(2)
+            with col_fx_load:
+                st.caption("Across normal load sweep (zero camber)")
+                fig = _sweep_overlay_figure(
+                    result.load_conditions,
+                    "SL", "FX",
+                    "fx_splines", "sl_grid", "fx",
+                    result.fx.load_sweep_fit_fx_n,
+                    FX_LBF_TO_N,
+                    lambda c: f"Fz={c.fz_nom:g} lbf",
+                    "Slip ratio SL", "Fx (lbf)",
+                    show_types,
+                )
+                exportable_graphs["FX_LoadSweep"] = ("Fx vs. slip ratio -- load sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
+            with col_fx_camber:
+                st.caption(f"Across camber sweep (Fz={result.reference_fz_nom:g} lbf)")
+                fig = _sweep_overlay_figure(
+                    result.camber_conditions,
+                    "SL", "FX",
+                    "fx_splines", "sl_grid", "fx",
+                    result.fx.camber_sweep_fit_fx_n,
+                    FX_LBF_TO_N,
+                    lambda c: f"IA={c.ia_nom:g} deg",
+                    "Slip ratio SL", "Fx (lbf)",
+                    show_types,
+                )
+                exportable_graphs["FX_CamberSweep"] = ("Fx vs. slip ratio -- camber sweep", fig)
+                st.plotly_chart(fig, use_container_width=True)
+
         st.subheader("Fitted coefficients")
-        col_fy_table, col_mz_table = st.columns(2)
-        col_fy_table.write("**Fy coefficients**")
-        col_fy_table.dataframe(dataclasses.asdict(result.fy.coefficients), use_container_width=True)
-        col_mz_table.write("**Mz coefficients**")
-        col_mz_table.dataframe(dataclasses.asdict(result.mz.coefficients), use_container_width=True)
+        if fit_mode == "Cornering":
+            col_fy_table, col_mz_table = st.columns(2)
+            col_fy_table.write("**Fy coefficients**")
+            col_fy_table.dataframe(dataclasses.asdict(result.fy.coefficients), use_container_width=True)
+            col_mz_table.write("**Mz coefficients**")
+            col_mz_table.dataframe(dataclasses.asdict(result.mz.coefficients), use_container_width=True)
+        else:
+            st.write("**Fx coefficients**")
+            st.dataframe(dataclasses.asdict(result.fx.coefficients), use_container_width=True)
 
         st.caption(
             "For goodness-of-fit details (R²/RMSE per condition), see the "
@@ -488,9 +562,14 @@ if have_round and not blocked_by_quality:
                 export_dir = Path(export_dir_input).expanduser()
                 export_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = export_dir / f"{name_prefix}_Coefficients.csv"
-                coefficients_df = cornering_fit_to_dataframe(
-                    result, tire=tire, round_=int(round_num), run=int(run_num)
-                )
+                if fit_mode == "Cornering":
+                    coefficients_df = cornering_fit_to_dataframe(
+                        result, tire=tire, round_=int(round_num), run=int(run_num)
+                    )
+                else:
+                    coefficients_df = longitudinal_fit_to_dataframe(
+                        result, tire=tire, round_=int(round_num), run=int(run_num)
+                    )
                 coefficients_df.to_csv(csv_path, index=False)
                 st.success(f"Saved {csv_path}")
             except OSError as exc:

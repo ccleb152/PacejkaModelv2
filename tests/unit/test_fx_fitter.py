@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pacejka.fitters.fx import SL_GRID, fit_kappa_sweep
+from pacejka.fitters.fx import SL_GRID, fit_kappa_sweep, trim_to_raw_domain
 
 
 @pytest.fixture
@@ -59,3 +59,35 @@ def test_channels_are_smoothed_independently_with_their_own_param(synthetic_kapp
     assert np.all(np.isfinite(result.fx))
     assert np.all(np.isfinite(result.mz))
     assert not np.allclose(result.fx, result.mz)
+
+
+def test_trim_to_raw_domain_drops_points_outside_the_given_range(synthetic_kappa_sweep):
+    # Regression test: a condition whose real raw SL doesn't reach the
+    # fixed grid's edges should have its extrapolated tail(s) dropped --
+    # confirmed necessary on real R20 18x6-10 data (Fz=50 lbf's raw SL
+    # only reached 0.115, and csaps extrapolated to +2487 N at the
+    # grid's 0.141 edge for a 50 lbf load). See MODEL_CHANGES.md.
+    condition, _ = synthetic_kappa_sweep
+    splines = fit_kappa_sweep(condition)
+
+    trimmed = trim_to_raw_domain(splines, sl_min=-0.1, sl_max=0.1)
+
+    assert trimmed.sl_grid.min() >= -0.1
+    assert trimmed.sl_grid.max() <= 0.1
+    assert len(trimmed.sl_grid) < len(splines.sl_grid)
+    # Every array stays aligned to the same (shorter) grid.
+    assert len(trimmed.fx) == len(trimmed.sl_grid)
+    assert len(trimmed.fy) == len(trimmed.sl_grid)
+    assert len(trimmed.mz) == len(trimmed.sl_grid)
+    assert len(trimmed.vc) == len(trimmed.sl_grid)
+    # Untouched outside the trim -- same values, just fewer of them.
+    inside = (splines.sl_grid >= -0.1) & (splines.sl_grid <= 0.1)
+    assert np.array_equal(trimmed.fx, splines.fx[inside])
+
+
+def test_trim_to_raw_domain_is_a_no_op_when_domain_covers_the_whole_grid(synthetic_kappa_sweep):
+    condition, _ = synthetic_kappa_sweep
+    splines = fit_kappa_sweep(condition)
+    trimmed = trim_to_raw_domain(splines, sl_min=SL_GRID[0], sl_max=SL_GRID[-1])
+    assert np.array_equal(trimmed.sl_grid, splines.sl_grid)
+    assert np.array_equal(trimmed.fx, splines.fx)
