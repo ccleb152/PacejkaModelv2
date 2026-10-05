@@ -19,6 +19,64 @@ and when.
 
 ---
 
+## 2026-10-06 -- Fit Base and dIA jointly instead of staged, for both Fy and Mz
+
+**What:** `pacejka/fitters/mz.py`'s `fit_mz_coefficients` and
+`pacejka/fitters/fy.py`'s `fit_fy_coefficients` no longer fit the Base
+coefficients alone (against only the single zero-camber reference
+condition) and then freeze them before fitting the dIA coefficients
+(against the camber sweep). They now fit Base and dIA *jointly*, in one
+optimization, against the reference condition plus the full camber sweep
+together. The dFz stage is unchanged in both files -- same fields,
+bounds, loss function, and load-sweep data as before, run as its own
+stage afterward, just starting from the jointly-fit Base values instead
+of a Base fit that never saw camber data.
+
+**Why:** the original MATLAB term finders (and this port, until now)
+always staged Base before dIA, so Base's coefficients were chosen with
+zero regard for anything off-camber -- by the time dIA ran, it was stuck
+correcting around values that were never asked to accommodate camber
+variation. This was investigated at length in `research/` (see that
+folder's `OPTIMIZATION_NOTES.md` for the full experiment log, including
+two approaches that were tried and rejected first):
+
+- Fitting *all* coefficients (Base, dFz, and dIA) jointly in one pass
+  fixed Mz's camber sweep but cost real load-sweep accuracy, since the
+  load sweep ended up competing with the camber sweep in the same
+  unweighted objective.
+- Weighting that joint objective by each condition's own scale recovered
+  some of the load-sweep accuracy but overcorrected, visibly clipping
+  the high-load peaks.
+- Fitting Base+dIA jointly while leaving dFz as its own untouched stage
+  (this change) avoided both problems, because the load sweep never has
+  to compete with anything -- it keeps its own dedicated stage exactly
+  as production always ran it.
+
+**Verified with:** two real tires (R20 16x7.5, LCO 16x7.5, both from the
+bundled `RawDataFiles`) and the synthetic fixture in
+`tests/unit/test_regression.py`. Mz's camber sweep improves
+substantially on both tires (R20: IA=2° R² 0.894->0.970, IA=4°
+0.750->0.971; LCO's camber sweep was already good, and still improved
+slightly). Fy improves slightly across several conditions on both tires
+(e.g. LCO Fz=250 lbf RMSE 17.5->3.5) despite having no camber-sweep
+problem to fix, and was never worse. The one place a small cost showed
+up -- R20's Mz load sweep dips by 0.001-0.013 R² -- was traced to
+`Bz9`/`Bz10` (the residual-moment stiffness term, which has no
+dIA-stage correction term of its own) shifting substantially to also
+explain the camber sweep; see `research/OPTIMIZATION_NOTES.md`'s
+2026-10-02 entry for the full coefficient-level comparison. No
+regression found on any other condition, either tire, either equation.
+All 117 existing tests pass unmodified -- the staging order was never
+something any test depended on.
+
+**Not changed:** the dFz stage's own fields, bounds, data, or loss
+function, in either file. `Dz2` staying pinned to `0.0` (quirk from the
+2026-10-01 entry below) and the deferred cross-term coefficients
+(`Hz4`/`Dz9`/`Dz11` for Mz, `Ky7`/`Vsy4` for Fy) are unaffected by this
+change -- they're still never fit, for the same reasons as before.
+
+---
+
 ## 2026-10-01 -- Pinned the dead `Dz2` parameter; investigated and reverted widening the dIA/Base-stage bounds
 
 **Context:** after the smoothing fix below, a real R20 16x7.5 fit (team's

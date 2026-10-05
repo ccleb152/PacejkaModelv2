@@ -167,11 +167,15 @@ _MZ_P0 = dict(
     Ez1=1.0, Ez2=1.0, Ez3=1.0, Ez4=1.0, Ez5=1.0,
 )
 
-# Base stage: fit at the nominal load, zero camber. Field order and
-# (lb, ub) match Pacejka_Term_Finder_MZ_V1_redo.m's Xb(1..10)/lbb/ubb
-# exactly. Bz4's bounds (20.0, 20.0) are a deliberate zero-width fix
-# (same mechanism as the FY term finder's Dy1 -- see
-# pacejka.fitting.split_fixed_fields), not a typo.
+# Base coefficients: historically fit alone, at the nominal load and zero
+# camber only (Pacejka_Term_Finder_MZ_V1_redo.m's Xb(1..10)/lbb/ubb,
+# field order and bounds still match that exactly). As of the
+# partial-staged fit below, these are fit *jointly* with the dIA fields
+# -- see `fit_mz_coefficients` -- so "Base stage" is no longer a separate
+# optimization pass, just the name for this field group. Bz4's bounds
+# (20.0, 20.0) are a deliberate zero-width fix (same mechanism as the FY
+# term finder's Dy1 -- see pacejka.fitting.split_fixed_fields), not a
+# typo.
 #
 # Hz1 pegs exactly at this (-0.01, 0.01) bound on real R20 16x7.5 TTC
 # data. Investigated widening it (see MODEL_CHANGES.md) -- unlike FY's
@@ -197,7 +201,9 @@ _BASE_BOUNDS = (
     (-20.0, 20.0),
 )
 
-# dFz stage: fit across every tested load at zero camber. The original
+# dFz coefficients: fit across every tested load at zero camber, as its
+# own, separate stage -- the one part of the original Base/dFz/dIA split
+# this port keeps staged (see `fit_mz_coefficients`). The original
 # hardcodes `Fz_vals = Fz_nom` -- i.e. literally the same single load the
 # Base stage already uses (the file's own comment, `%[50 100 150 200
 # 250]`, shows what this was clearly meant to be before someone replaced
@@ -231,26 +237,30 @@ _DFZ_BOUNDS = (
     (-20.0, 270.0),
 )
 
-# dIA stage: fit across every tested camber angle at the nominal load. The
-# original hardcodes `gamma_vals = 2` -- a single nonzero camber, not a
-# sweep. Milder than the dFz bug above (a nonzero camber does give the
-# fit *some* sensitivity, unlike FY's dIA stage's exactly-zero-effect
+# dIA coefficients: historically fit alone, across every tested camber
+# angle at the nominal load, with Base already frozen. The original
+# hardcodes `gamma_vals = 2` -- a single nonzero camber, not a sweep.
+# Milder than the dFz bug above (a nonzero camber does give the fit
+# *some* sensitivity, unlike FY's dIA stage's exactly-zero-effect
 # hardcoding), but still poorly identified: several terms multiply
 # different functions of gamma (gamma, gamma**2, abs(gamma)), which can't
 # be told apart from data at only one nonzero camber value. Fixed the
 # same way: a real multi-camber sweep (e.g. 0/2/4 deg).
 #
-# Hz3, Bz5, and Dz4 all peg exactly at their bound on real R20 16x7.5
-# TTC data too. Same investigation and same conclusion as Hz1 above
-# (see MODEL_CHANGES.md): widening these bounds doesn't converge to an
-# interior optimum, it runs to whichever bound it's given, and it
-# measurably destabilizes the synthetic fixture's fit quality
-# (tests/unit/test_regression.py) in the process. With only 3 tested
-# camber angles (0/2/4 deg) fitting 7 dIA-stage parameters, several of
-# which multiply different functions of gamma, this stage is thinly
-# determined -- the original MATLAB bounds are inadvertently acting as a
-# regularizer here, not an arbitrary restriction like FY's Ky1 was.
-# Left at the original MATLAB values.
+# As of the partial-staged fit below, fit *jointly* with the Base fields
+# above (see `fit_mz_coefficients`) rather than as its own stage after
+# Base is frozen -- see MODEL_CHANGES.md for why (Base's own
+# coefficients, not just these, needed to see real camber data; fitting
+# Base alone against the zero-camber condition left it unable to
+# generalize). Hz3, Bz5, and Dz4 still peg exactly at their bound on real
+# R20 16x7.5 TTC data even after that change; widening them was
+# investigated and reverted (see MODEL_CHANGES.md's 2026-10-01 entry) --
+# with only 3 tested camber angles (0/2/4 deg) fitting 7 of these fields,
+# several of which multiply different functions of gamma, this dimension
+# is thinly determined regardless of how Base and dIA are staged, and the
+# original MATLAB bounds are inadvertently acting as a regularizer here,
+# not an arbitrary restriction like FY's Ky1 was. Left at the original
+# MATLAB values.
 _DIA_FIELDS = ("Hz3", "Bz5", "Dz3", "Dz4", "Dz8", "Dz10", "Ez5")
 _DIA_BOUNDS = (
     (-0.01, 0.01),
@@ -354,10 +364,26 @@ def fit_mz_coefficients(
     `FY_Parameters` file, but taken directly in memory here instead of
     round-tripping through disk -- see CLAUDE.md's migration workflow).
 
-    Port of Pacejka_Term_Finder_MZ_V1_redo.m's Base/dFz/dIA stages. See
-    `mz_pure` for the alpha_r/alpha_t bug fix, this module's `_DFZ_FIELDS`/
-    `_DIA_FIELDS` for the hardcoded-single-condition fixes, and
-    `MzFitResult` for the deferred cross term.
+    Port of Pacejka_Term_Finder_MZ_V1_redo.m's Base/dFz/dIA stages, with
+    one deliberate departure from the original's staging order -- see
+    MODEL_CHANGES.md's 2026-10-05 entry for the full investigation.
+    The original (and this port, until that change) fits Base alone
+    against only the single zero-camber reference condition, freezes it,
+    then fits dIA alone against the camber sweep -- so Base's
+    coefficients are chosen with zero regard for camber, and dIA is stuck
+    making the best of whatever Base already picked. This port instead
+    fits Base and dIA *jointly*, against the reference condition plus the
+    full camber sweep together, so Base's own coefficients can adjust to
+    actually accommodate the camber data instead of just the add-on dIA
+    terms. The dFz stage is unchanged -- same fields, bounds, and load
+    sweep data as before, just starting from the jointly-fit Base values.
+    Checked against two real tires and the synthetic test fixture with no
+    regression found and the camber sweep meaningfully improved on both
+    (dramatically on one) -- see MODEL_CHANGES.md.
+
+    See `mz_pure` for the alpha_r/alpha_t bug fix, this module's
+    `_DFZ_FIELDS`/`_DIA_FIELDS` for the hardcoded-single-condition fixes,
+    and `MzFitResult` for the deferred cross term.
     """
     fz0_prime = base.fz_n
     coeffs_values = dict(_MZ_P0)
@@ -367,36 +393,37 @@ def fit_mz_coefficients(
     coeffs_values["Dz2"] = 0.0
 
     base_fy_derived = [_fy_derived_terms(base, fz0_prime, fy_coefficients)]
-    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(_BASE_FIELDS, _BASE_BOUNDS, coeffs_values)
+    camber_fy_derived = [_fy_derived_terms(p, fz0_prime, fy_coefficients) for p in camber_sweep]
+    load_fy_derived = [_fy_derived_terms(p, fz0_prime, fy_coefficients) for p in load_sweep]
+
+    # Stage 1: Base + dIA fit jointly, against the reference condition
+    # plus the full camber sweep.
+    base_dia_fields = _BASE_FIELDS + _DIA_FIELDS
+    base_dia_bounds = _BASE_BOUNDS + _DIA_BOUNDS
+    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(base_dia_fields, base_dia_bounds, coeffs_values)
     coeffs_values.update(fixed_from_bounds)
+    camber_points = [base] + list(camber_sweep)
+    camber_points_fy_derived = base_fy_derived + camber_fy_derived
     x0 = [coeffs_values[name] for name in free_fields]
     fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
     coeffs_values.update(
-        _fit_mz_stage(free_fields, x0, [base], base_fy_derived, fz0_prime, ro, fixed, bounds=free_bounds)
+        _fit_mz_stage(
+            free_fields, x0, camber_points, camber_points_fy_derived, fz0_prime, ro, fixed, bounds=free_bounds
+        )
     )
-    base_fit_mz_nm = _eval_mz([base], base_fy_derived, fz0_prime, ro, MzCoefficients(**coeffs_values))[0]
 
-    load_fy_derived = [_fy_derived_terms(p, fz0_prime, fy_coefficients) for p in load_sweep]
+    # Stage 2: dFz against the load sweep -- unchanged from the original
+    # staged approach, just starting from Stage 1's Base values.
     x0 = [coeffs_values[name] for name in _DFZ_FIELDS]
     fixed = {k: v for k, v in coeffs_values.items() if k not in _DFZ_FIELDS}
     coeffs_values.update(
         _fit_mz_stage(_DFZ_FIELDS, x0, load_sweep, load_fy_derived, fz0_prime, ro, fixed, bounds=_DFZ_BOUNDS)
     )
-    load_sweep_fit_mz_nm = _eval_mz(load_sweep, load_fy_derived, fz0_prime, ro, MzCoefficients(**coeffs_values))
-
-    camber_fy_derived = [_fy_derived_terms(p, fz0_prime, fy_coefficients) for p in camber_sweep]
-    x0 = [coeffs_values[name] for name in _DIA_FIELDS]
-    fixed = {k: v for k, v in coeffs_values.items() if k not in _DIA_FIELDS}
-    coeffs_values.update(
-        _fit_mz_stage(_DIA_FIELDS, x0, camber_sweep, camber_fy_derived, fz0_prime, ro, fixed, bounds=_DIA_BOUNDS)
-    )
 
     final_coeffs = MzCoefficients(**coeffs_values)
-    camber_sweep_fit_mz_nm = _eval_mz(camber_sweep, camber_fy_derived, fz0_prime, ro, final_coeffs)
-
     return MzFitResult(
         coefficients=final_coeffs,
-        base_fit_mz_nm=base_fit_mz_nm,
-        load_sweep_fit_mz_nm=load_sweep_fit_mz_nm,
-        camber_sweep_fit_mz_nm=camber_sweep_fit_mz_nm,
+        base_fit_mz_nm=_eval_mz([base], base_fy_derived, fz0_prime, ro, final_coeffs)[0],
+        load_sweep_fit_mz_nm=_eval_mz(load_sweep, load_fy_derived, fz0_prime, ro, final_coeffs),
+        camber_sweep_fit_mz_nm=_eval_mz(camber_sweep, camber_fy_derived, fz0_prime, ro, final_coeffs),
     )
