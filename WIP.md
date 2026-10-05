@@ -1,14 +1,9 @@
 # Things to Fix
 
 ## Immediate Actions
-- Once submitted feedback, clear blank text box
-- Run error messages
-- HomePage explaining instructions or added instructions in the actual app
 - Superbase beta deployment
 
 ## Continuous Improvement - Engineering
-- create agent to go through feedback and auto write revisions and create pull requests to review
-- fix MF equations and smoothing params for each fit
 - Extend to longitudinal data plots
 - Interpolate and extrapolate normal loads for more data
 - Have section for viewing certain plots (selecting which ones to view?)
@@ -24,5 +19,3 @@
 - allows user to either select raw data file or select from database housed in repository/app
 
 ## Data Correlation and Confirmation
-- Regression analysis
-- Comparison of r^2 values to old model?
