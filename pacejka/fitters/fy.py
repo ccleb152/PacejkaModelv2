@@ -141,11 +141,12 @@ _P0 = dict(
     Vsy1=0.0, Vsy2=0.0, Vsy3=3.0, Vsy4=0.0,
 )
 
-# Base stage: fit at the nominal load, zero camber. Field order and (lb, ub)
-# match Pacejka_Term_Finder_FY_V3.m's Xb(1..9)/lbb/ubb exactly, with one
-# deliberate fix -- see CLAUDE.md quirk #9: the original bounds Ky1 to
-# [-70, -50], which excludes its own initial guess (175.5) and has the
-# wrong sign for a coefficient that needs to be positive (it scales the
+# Base coefficients: historically fit alone, at the nominal load and
+# zero camber only (Pacejka_Term_Finder_FY_V3.m's Xb(1..9)/lbb/ubb,
+# field order and bounds still match that exactly, with one deliberate
+# fix -- see CLAUDE.md quirk #9: the original bounds Ky1 to [-70, -50],
+# which excludes its own initial guess (175.5) and has the wrong sign for
+# a coefficient that needs to be positive (it scales the
 # cornering-stiffness term Ky_a); MATLAB would have silently clipped the
 # initial guess to -50 and fit a physically-backwards (negative-stiffness)
 # curve. Widened here to a permissive, uncommitted [0, 1000] bracket that
@@ -154,6 +155,10 @@ _P0 = dict(
 # bounds (2.784, 2.784) are a zero-width, evidently intentional fix of
 # mu_y to a known value; its mismatched p0 (2.625) is inert since the
 # fixed bound overrides it regardless.
+#
+# As of the partial-staged fit below, these are fit *jointly* with the
+# dIA fields -- see `fit_fy_coefficients` -- so "Base stage" is no longer
+# a separate optimization pass, just the name for this field group.
 _BASE_FIELDS = ("Cy1", "Dy1", "Ey1", "Ey3", "Hsy1", "Ky1", "Ky2", "Ky4", "Vsy1")
 _BASE_BOUNDS = (
     (1.5, 1.7),
@@ -167,10 +172,12 @@ _BASE_BOUNDS = (
     (-10.0, 25.0),
 )
 
-# dFz stage: fit across every tested load at zero camber (per the
+# dFz coefficients: fit across every tested load at zero camber (per the
 # multi-load-sweep decision in CLAUDE.md's roadmap -- the original hardcodes
-# a single Fz_vals = [50], quirk #7). The original fits this stage with
-# `nlinfit` + bisquare robust weighting and *never actually applies* the
+# a single Fz_vals = [50], quirk #7), as its own, separate stage -- the
+# one part of the original Base/dFz/dIA split this port keeps staged (see
+# `fit_fy_coefficients`). The original fits this stage with `nlinfit` +
+# bisquare robust weighting and *never actually applies* the
 # lbfz/ubfz bounds it computes (nlinfit doesn't support bounds at all;
 # they're only ever written into the output table as metadata) -- so this
 # stays genuinely unconstrained here too, matching real behavior rather
@@ -182,21 +189,29 @@ _BASE_BOUNDS = (
 # consistently (see `sweep_point_from_alpha_sweep`, which always converts).
 _DFZ_FIELDS = ("Dy2", "Ey2", "Hsy2", "Vsy2")
 
-# dIA stage: fit across every tested camber angle at the nominal load. The
-# original hardcodes gamma_vals = [0] (quirk #11), meaning it fits
+# dIA coefficients: historically fit alone, across every tested camber
+# angle at the nominal load, with Base already frozen. The original
+# hardcodes gamma_vals = [0] (quirk #11), meaning it fits
 # camber-sensitivity coefficients using data recorded *at zero camber*,
 # with its own model also evaluated at zero camber throughout -- every
 # term this stage is supposed to fit multiplies gamma_star or
 # gamma_star**2, so it has zero effect on the fit's objective function and
 # the "fitted" values are pure optimizer noise. Fixed the same way as dFz:
 # real data spanning multiple tested camber angles, not one hardcoded
-# value. Field order and bounds
-# match Xb(...)/lbIA/ubIA exactly; one mild initial-guess overshoot exists
-# (Dy3's p0=25 is just outside its own ub=20) and is handled generically by
-# clipping into bounds before fitting, replicating MATLAB's own documented
-# behavior for lsqcurvefit given an infeasible x0 (it silently moves
-# out-of-bounds components to the nearest bound) rather than scipy's
-# `least_squares`, which raises instead.
+# value. Field order and bounds match Xb(...)/lbIA/ubIA exactly; one mild
+# initial-guess overshoot exists (Dy3's p0=25 is just outside its own
+# ub=20) and is handled generically by clipping into bounds before
+# fitting, replicating MATLAB's own documented behavior for lsqcurvefit
+# given an infeasible x0 (it silently moves out-of-bounds components to
+# the nearest bound) rather than scipy's `least_squares`, which raises
+# instead.
+#
+# As of the partial-staged fit below, fit *jointly* with the Base fields
+# above (see `fit_fy_coefficients`) rather than as its own stage after
+# Base is frozen -- the same change made to pacejka.fitters.mz, and for
+# the same reason (see MODEL_CHANGES.md's 2026-10-05 entry): Base's own
+# coefficients, not just these, need to see real camber data to
+# generalize to it.
 _DIA_FIELDS = ("Dy3", "Ey4", "Ey5", "Ky3", "Ky5", "Ky6", "Vsy3")
 _DIA_BOUNDS = (
     (-20.0, 20.0),
@@ -270,37 +285,52 @@ def fit_fy_coefficients(
 
     Port of Pacejka_Term_Finder_FY_V3.m's Base/dFz/dIA stages -- see
     CLAUDE.md quirks #7 and #11 (hardcoded single-condition dFz/dIA data),
-    #9 and #10 (Ky1 bounds, dFz unit bug), and #12 (deferred cross term),
-    plus the module-level docstrings on `_BASE_BOUNDS`/`_DIA_FIELDS`/
+    #9 and #10 (Ky1 bounds, dFz unit bug), and #12 (deferred cross term) --
+    with one deliberate departure from the original's staging order, the
+    same change made to `pacejka.fitters.mz.fit_mz_coefficients` and for
+    the same reason (see MODEL_CHANGES.md's 2026-10-05 entry). The
+    original (and this port, until that change) fits Base alone against
+    only the single zero-camber reference condition, freezes it, then
+    fits dIA alone against the camber sweep -- so Base's coefficients are
+    chosen with zero regard for camber. This port instead fits Base and
+    dIA *jointly*, against the reference condition plus the full camber
+    sweep together. The dFz stage is unchanged -- same fields, bounds
+    (none -- unconstrained, matching the original's `nlinfit`), robust
+    loss, and load sweep data as before, just starting from the
+    jointly-fit Base values. Checked against two real tires and the
+    synthetic test fixture with no regression found and several
+    conditions measurably improved -- see MODEL_CHANGES.md.
+
+    See the module-level docstrings on `_BASE_BOUNDS`/`_DIA_FIELDS`/
     `FyFitResult` for what changed and why.
     """
     fz0_prime = base.fz_n
     coeffs_values = dict(_P0)
-
-    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(_BASE_FIELDS, _BASE_BOUNDS, coeffs_values)
-    coeffs_values.update(fixed_from_bounds)
-    x0 = [coeffs_values[name] for name in free_fields]
-    fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
-    coeffs_values.update(_fit_fy_stage(free_fields, x0, [base], fz0_prime, fixed, bounds=free_bounds))
-    base_fit_fy_n, _ = fy_pure(
-        base.fz_n, fz0_prime, base.gamma_star, base.alpha_rad, FyCoefficients(**coeffs_values)
-    )
-
-    x0 = [coeffs_values[name] for name in _DFZ_FIELDS]
-    fixed = {k: v for k, v in coeffs_values.items() if k not in _DFZ_FIELDS}
-    coeffs_values.update(_fit_fy_stage(_DFZ_FIELDS, x0, load_sweep, fz0_prime, fixed, bounds=None, robust=True))
-    dfz_coeffs = FyCoefficients(**coeffs_values)
-    load_sweep_fit_fy_n = [fy_pure(p.fz_n, fz0_prime, p.gamma_star, p.alpha_rad, dfz_coeffs)[0] for p in load_sweep]
-
-    x0 = [coeffs_values[name] for name in _DIA_FIELDS]
-    fixed = {k: v for k, v in coeffs_values.items() if k not in _DIA_FIELDS}
-    coeffs_values.update(_fit_fy_stage(_DIA_FIELDS, x0, camber_sweep, fz0_prime, fixed, bounds=_DIA_BOUNDS))
-
-    # Load-camber cross term: deferred, not fit -- see FyFitResult.
     coeffs_values["Ky7"] = 0.0
     coeffs_values["Vsy4"] = 0.0
 
+    # Stage 1: Base + dIA fit jointly, against the reference condition
+    # plus the full camber sweep.
+    base_dia_fields = _BASE_FIELDS + _DIA_FIELDS
+    base_dia_bounds = _BASE_BOUNDS + _DIA_BOUNDS
+    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(base_dia_fields, base_dia_bounds, coeffs_values)
+    coeffs_values.update(fixed_from_bounds)
+    camber_points = [base] + list(camber_sweep)
+    x0 = [coeffs_values[name] for name in free_fields]
+    fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
+    coeffs_values.update(_fit_fy_stage(free_fields, x0, camber_points, fz0_prime, fixed, bounds=free_bounds))
+
+    # Stage 2: dFz against the load sweep -- unchanged from production
+    # (unconstrained, robust loss), just starting from Stage 1's Base
+    # values instead of a Base fit that only ever saw the zero-camber
+    # condition.
+    x0 = [coeffs_values[name] for name in _DFZ_FIELDS]
+    fixed = {k: v for k, v in coeffs_values.items() if k not in _DFZ_FIELDS}
+    coeffs_values.update(_fit_fy_stage(_DFZ_FIELDS, x0, load_sweep, fz0_prime, fixed, bounds=None, robust=True))
+
     final_coeffs = FyCoefficients(**coeffs_values)
+    base_fit_fy_n, _ = fy_pure(base.fz_n, fz0_prime, base.gamma_star, base.alpha_rad, final_coeffs)
+    load_sweep_fit_fy_n = [fy_pure(p.fz_n, fz0_prime, p.gamma_star, p.alpha_rad, final_coeffs)[0] for p in load_sweep]
     camber_sweep_fit_fy_n = [
         fy_pure(p.fz_n, fz0_prime, p.gamma_star, p.alpha_rad, final_coeffs)[0] for p in camber_sweep
     ]

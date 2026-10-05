@@ -19,6 +19,130 @@ and when.
 
 ---
 
+## 2026-10-06 -- Fit Base and dIA jointly instead of staged, for both Fy and Mz
+
+**What:** `pacejka/fitters/mz.py`'s `fit_mz_coefficients` and
+`pacejka/fitters/fy.py`'s `fit_fy_coefficients` no longer fit the Base
+coefficients alone (against only the single zero-camber reference
+condition) and then freeze them before fitting the dIA coefficients
+(against the camber sweep). They now fit Base and dIA *jointly*, in one
+optimization, against the reference condition plus the full camber sweep
+together. The dFz stage is unchanged in both files -- same fields,
+bounds, loss function, and load-sweep data as before, run as its own
+stage afterward, just starting from the jointly-fit Base values instead
+of a Base fit that never saw camber data.
+
+**Why:** the original MATLAB term finders (and this port, until now)
+always staged Base before dIA, so Base's coefficients were chosen with
+zero regard for anything off-camber -- by the time dIA ran, it was stuck
+correcting around values that were never asked to accommodate camber
+variation. This was investigated at length in `research/` (see that
+folder's `OPTIMIZATION_NOTES.md` for the full experiment log, including
+two approaches that were tried and rejected first):
+
+- Fitting *all* coefficients (Base, dFz, and dIA) jointly in one pass
+  fixed Mz's camber sweep but cost real load-sweep accuracy, since the
+  load sweep ended up competing with the camber sweep in the same
+  unweighted objective.
+- Weighting that joint objective by each condition's own scale recovered
+  some of the load-sweep accuracy but overcorrected, visibly clipping
+  the high-load peaks.
+- Fitting Base+dIA jointly while leaving dFz as its own untouched stage
+  (this change) avoided both problems, because the load sweep never has
+  to compete with anything -- it keeps its own dedicated stage exactly
+  as production always ran it.
+
+**Verified with:** two real tires (R20 16x7.5, LCO 16x7.5, both from the
+bundled `RawDataFiles`) and the synthetic fixture in
+`tests/unit/test_regression.py`. Mz's camber sweep improves
+substantially on both tires (R20: IA=2° R² 0.894->0.970, IA=4°
+0.750->0.971; LCO's camber sweep was already good, and still improved
+slightly). Fy improves slightly across several conditions on both tires
+(e.g. LCO Fz=250 lbf RMSE 17.5->3.5) despite having no camber-sweep
+problem to fix, and was never worse. The one place a small cost showed
+up -- R20's Mz load sweep dips by 0.001-0.013 R² -- was traced to
+`Bz9`/`Bz10` (the residual-moment stiffness term, which has no
+dIA-stage correction term of its own) shifting substantially to also
+explain the camber sweep; see `research/OPTIMIZATION_NOTES.md`'s
+2026-10-02 entry for the full coefficient-level comparison. No
+regression found on any other condition, either tire, either equation.
+All 117 existing tests pass unmodified -- the staging order was never
+something any test depended on.
+
+**Not changed:** the dFz stage's own fields, bounds, data, or loss
+function, in either file. `Dz2` staying pinned to `0.0` (quirk from the
+2026-10-01 entry below) and the deferred cross-term coefficients
+(`Hz4`/`Dz9`/`Dz11` for Mz, `Ky7`/`Vsy4` for Fy) are unaffected by this
+change -- they're still never fit, for the same reasons as before.
+
+---
+
+## 2026-10-01 -- Pinned the dead `Dz2` parameter; investigated and reverted widening the dIA/Base-stage bounds
+
+**Context:** after the smoothing fix below, a real R20 16x7.5 fit (team's
+own bundled `RawDataFiles` cornering runs) still looked visibly off at
+higher loads on the Mz vs. slip-angle plot, so this was investigated
+against that real data rather than just the synthetic test fixture.
+
+**What (kept):** `pacejka/fitters/mz.py`'s dFz stage no longer fits
+`Dz2` -- it's pinned to `0.0` in `fit_mz_coefficients`, the same
+treatment as the already-deferred `Hz4`/`Dz9`/`Dz11` cross-term
+coefficients.
+
+**Why:** Traced a previously-undocumented issue back to the original
+MATLAB source itself (`Pacejka_Term_Finder_MZ_V1_redo.m`): `Dz2` is
+declared as a free dFz-stage parameter (`qstat.Dz2 = [0 1 0 0 0]`), but
+every `Dto` formula in the file (`BaseFit.Dto`, `dFzFit.Dto`, etc.) uses
+`Xb(7) + Xf(5)*dfz` -- `Dz1 + Dz7*dfz` -- and never references `Dz2` at
+all. Confirmed on the real R20 data: the fitted `Dz2` came back as an
+arbitrary, meaningless value (`-38.45`) with zero relationship to fit
+quality, since the residual has no gradient with respect to it. Not a
+porting bug -- `pacejka/model.py`'s `mz_pure` faithfully matches the
+original's formula -- but it was silently wasting one of only 7
+dFz-stage degrees of freedom on a parameter the model can't use. Pinning
+it to `0.0` is honest about that rather than reporting a fitted value
+that means nothing.
+
+**Impact:** Verified via `tests/unit/test_mz_term_finder.py` (new test:
+`test_dz2_is_always_zero_not_fit`) and by re-running the real R20 fit:
+removing `Dz2` from the free parameters changes nothing measurable in
+fit quality (R² identical to 5 decimal places), as expected for a
+parameter that was never affecting the residual in the first place --
+this is a correctness/honesty fix, not an accuracy improvement.
+
+**What (investigated, then reverted):** the real R20 fit also pegs
+`Hz1` (Base stage) and `Hz3`/`Bz5`/`Dz4` (dIA stage) exactly at their
+original MATLAB bounds, which looked at first like the same class of
+problem as FY's `Ky1` bounds (CLAUDE.md quirk #9) -- bounds copied from
+MATLAB without validation against real data, capping an otherwise-better
+fit. Widening them (tried `(-0.05, 0.05)` for the two shift terms,
+`(-50, 50)` for `Bz5`/`Dz4`) turned out to be the wrong read: re-running
+the real fit with much wider bounds (±1 and ±200) showed these
+parameters don't converge to an interior optimum at all -- they run
+straight to whatever bound they're given. That's the signature of
+under-identification, not an overly tight bound: with only 3 tested
+camber angles (0/2/4 deg) fitting 7 dIA-stage parameters, several of
+which multiply different functions of gamma, the data doesn't actually
+pin these coefficients down independently of each other. The original
+MATLAB bounds are inadvertently acting as a regularizer here. This was
+also confirmed destabilizing the synthetic fixture's fit quality
+(`tests/unit/test_regression.py`), which was the tell that something was
+wrong with the widening rather than with the original bounds. **Reverted
+to the original MATLAB bounds** for `Hz1`, `Hz3`, `Bz5`, and `Dz4`.
+Genuinely resolving this needs either a richer camber sweep (more than 3
+tested angles) or a reparameterization that reduces how many dIA-stage
+terms compete for the same information -- not a wider bracket. Flagged
+here, not in CLAUDE.md's quirks list, since it's not a MATLAB-source
+quirk -- it's a real identifiability limitation of this fitting stage
+given realistic test data, worth knowing before anyone else tries the
+same "just widen the bound" fix.
+
+**Verified with:** full `pytest` suite (117 passed) and the real R20
+16x7.5 fit's `fit_quality_table` before/after, at each step of the
+investigation above.
+
+---
+
 ## 2026-09-29 -- Reverted Mz spline over-smoothing (`_MZ_SMOOTHING_PARAM`)
 
 **What:** `pacejka/fitters/mz.py`'s `_MZ_SMOOTHING_PARAM` changed from

@@ -123,18 +123,31 @@ def test_cross_term_coefficients_are_always_zero_not_fit(synthetic_dataset):
     assert result.coefficients.Dz11 == 0.0
 
 
+def test_dz2_is_always_zero_not_fit(synthetic_dataset):
+    # Dz2 is a dead parameter in the original MATLAB source itself (no
+    # Dto formula ever references it -- see pacejka/fitters/mz.py's
+    # _DFZ_FIELDS comment and MODEL_CHANGES.md), so it's pinned to 0.0
+    # unconditionally rather than fit from data it structurally can't
+    # affect -- regardless of how rich the load sweep is.
+    base, load_sweep, camber_sweep = synthetic_dataset
+    result = fit_mz_coefficients(base, load_sweep, camber_sweep, FY_COEFFS, ro=RO)
+    assert result.coefficients.Dz2 == 0.0
+
+
 def test_single_load_sweep_cannot_identify_load_sensitivity(synthetic_dataset):
     # Regression test for the Fz_vals=Fz_nom bug: a single-condition load
     # sweep (replicating the original) has dfz identically 0 for its one
-    # point, so Dz2 has zero effect on the fit's objective and never
-    # moves off its p0 initial guess (1.0) -- regardless of the true
-    # value. The full multi-load sweep does move it.
+    # point, so a dFz-stage coefficient has zero effect on the fit's
+    # objective and never moves off its p0 initial guess (1.0) --
+    # regardless of the true value. The full multi-load sweep does move
+    # it. Bz2 (not Dz2 -- see test_dz2_is_always_zero_not_fit -- Dz2 is
+    # never fit at all, degenerate sweep or not) is the example here.
     base, _, camber_sweep = synthetic_dataset
 
     degenerate = fit_mz_coefficients(base, [base], camber_sweep, FY_COEFFS, ro=RO)
-    assert degenerate.coefficients.Dz2 == pytest.approx(1.0)
+    assert degenerate.coefficients.Bz2 == pytest.approx(1.0)
 
     rng = np.random.RandomState(0)
     real_sweep = [_make_point(rng, fz, 0) for fz in (50, 100, 150, 200, 250)]
     fixed = fit_mz_coefficients(base, real_sweep, camber_sweep, FY_COEFFS, ro=RO)
-    assert fixed.coefficients.Dz2 != pytest.approx(1.0)
+    assert fixed.coefficients.Bz2 != pytest.approx(1.0)
