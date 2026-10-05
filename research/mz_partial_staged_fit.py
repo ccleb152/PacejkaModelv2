@@ -210,6 +210,7 @@ def main():
 
     OUTPUT_DIR.mkdir(exist_ok=True)
     _plot_comparison(staged, partial_result, compound, diameter_in, width_in)
+    _plot_with_raw_data(staged, partial_result, compound, diameter_in, width_in)
 
 
 _PALETTE = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"]
@@ -257,6 +258,45 @@ def _plot_comparison(staged, partial_result, compound, diameter_in, width_in):
     out_path = OUTPUT_DIR / f"mz_partial_staged_vs_staged_{compound}_{diameter_in:g}x{width_in:g}.png"
     fig.write_image(out_path, scale=2)
     print(f"\nSaved plot to {out_path}")
+
+
+def _plot_with_raw_data(staged, partial_result, compound, diameter_in, width_in):
+    """Partial-staged fit curve overlaid directly on the raw (pre-
+    smoothing) measured samples -- the sanity check of whether the fit
+    tracks the actual data, not just the smoothed curve it was fit to.
+    """
+    ftlb = 1 / (0.3048 * 4.448)
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Load sweep", "Camber sweep"))
+
+    for col, conditions, partial_fits, label_fn in [
+        (1, staged.load_conditions, partial_result.mz.load_sweep_fit_mz_nm, lambda c: f"Fz={c.fz_nom:g} lbf"),
+        (2, staged.camber_conditions, partial_result.mz.camber_sweep_fit_mz_nm, lambda c: f"IA={c.ia_nom:g} deg"),
+    ]:
+        for i, (condition, partial_fit) in enumerate(zip(conditions, partial_fits)):
+            color = _PALETTE[i % len(_PALETTE)]
+            label = label_fn(condition)
+            fig.add_trace(
+                go.Scatter(
+                    x=condition.samples["SA"], y=condition.samples["MZ"], mode="markers",
+                    name=f"{label} raw", marker=dict(size=3, opacity=0.35, color=color), legendgroup=label,
+                ),
+                row=1, col=col,
+            )
+            fig.add_trace(
+                go.Scatter(x=condition.mz_splines.sa_grid_deg, y=partial_fit * ftlb, mode="lines",
+                           name=f"{label} partial-staged", line=dict(color=color, width=2.5), legendgroup=label),
+                row=1, col=col,
+            )
+        fig.update_xaxes(title_text="Slip angle (deg)", row=1, col=col)
+        fig.update_yaxes(title_text="Mz (ft-lb)", row=1, col=col)
+
+    fig.update_layout(
+        title=f"{compound} {diameter_in:g}x{width_in:g}: partial-staged Mz fit over raw measured data",
+        width=1400, height=600,
+    )
+    out_path = OUTPUT_DIR / f"mz_partial_staged_with_raw_{compound}_{diameter_in:g}x{width_in:g}.png"
+    fig.write_image(out_path, scale=2)
+    print(f"Saved plot to {out_path}")
 
 
 if __name__ == "__main__":
