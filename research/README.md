@@ -54,6 +54,16 @@ images).
   is itself the useful finding: it's not a generic property of joint
   fitting, it depends on which stage is actually under-identified for a
   given equation.
+- `mz_partial_staged_fit.py` / `fy_partial_staged_fit.py` -- the
+  follow-up that actually works: keep the production dFz (load-sweep)
+  stage completely unchanged, but fit Base+dIA jointly against the
+  reference condition plus the full camber sweep instead of staging them
+  sequentially. Fixes Mz's camber-sweep weakness with no load-sweep
+  cost, and even improves Fy slightly despite Fy having no camber-sweep
+  problem to fix. Checked against two real tires (R20 16x7.5, LCO
+  16x7.5) with no regression found on either equation -- **recommended
+  for promotion to `pacejka/fitters/mz.py` and `fy.py`**. See
+  `OPTIMIZATION_NOTES.md` for the full numbers.
 
 See `OPTIMIZATION_NOTES.md` for the running log of what's been tried,
 what the results were, and whether each approach is worth carrying into

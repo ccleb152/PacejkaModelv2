@@ -168,9 +168,18 @@ the setup from scratch.
   within 0.0006 R² there -- the fixture's camber sweep was already
   near-perfect under staging (no real under-identification to fix in
   synthetic, noise-light data), so this is confirmation of "does no
-  harm," not a second case of the same win. Still worth running against
-  a second *real* tire's data before promoting, since R20 16x7.5 is the
-  only real-data case checked so far.
+  harm," not a second case of the same win.
+- **Second real tire checked (LCO 16x7.5, a different compound at the
+  same size):** matches or beats staged on *every single condition*,
+  load sweep included -- Fz=50 lbf 0.612->0.643, Fz=100 0.911->0.925,
+  Fz=200 0.941->0.958, Fz=250 0.913->0.930, camber sweep +0.001 to
+  +0.004 (this tire's camber sweep was already good under staging,
+  unlike R20's, so there was less to fix there, but partial-staged still
+  never regressed anything). Two for two real tires now: one where it
+  fixed a serious camber-sweep problem with zero load-sweep cost, one
+  where camber was already fine and it still improved the load sweep
+  slightly. No regression found on any condition, either tire. Ready to
+  promote.
 
 ### Joint (simultaneous) least-squares fit vs. staged -- for Fy, checking whether the Mz trend generalizes
 
@@ -219,6 +228,51 @@ the setup from scratch.
   answer -- it depends on which stage is actually under-identified in the
   staged approach for a given equation, not something to apply uniformly
   to both Fy and Mz.
+
+### Partial-staged fit for Fy: same hybrid as Mz's, checking it doesn't regress an already-good fit
+
+- **Script:** `research/fy_partial_staged_fit.py`
+- **Date:** 2026-10-05
+- **What:** The same hybrid that worked for Mz (see that entry above):
+  dFz (load-sweep) stage kept completely unchanged from production
+  (unbounded, robust loss, same data), Base+dIA fit jointly against the
+  reference condition plus the full camber sweep instead of sequential
+  staging. Fy's own full joint fit (the entry two above this one) showed
+  that putting the load sweep into the same objective as everything else
+  hurts Fy, since its staged fit has no camber-sweep weakness to justify
+  the trade. This checks whether the *partial* hybrid -- which never
+  touches the load sweep's own dedicated stage -- avoids that problem.
+- **Result: no regression, several small-to-moderate improvements, on
+  both real tires checked.**
+
+  R20 16x7.5:
+
+  | Condition | Staged R² | Partial-staged R² | Staged RMSE | Partial RMSE |
+  |---|---|---|---|---|
+  | Fz=50 lbf | 0.9935 | 0.9948 | 9.0 | 8.1 |
+  | Fz=100 lbf | 0.9987 | 0.9992 | 7.7 | 5.9 |
+  | Fz=150 lbf | 0.9999 | 0.9998 | 3.7 | 3.8 (negligible) |
+  | Fz=250 lbf | 0.9970 | 0.9984 | 26.2 | 18.8 |
+  | camber sweep | 0.9998-0.9999 | unchanged to 0.0001 | -- | slightly lower |
+
+  LCO 16x7.5 (second tire, same as the Mz cross-check): same pattern,
+  more pronounced -- Fz=250 lbf RMSE drops from 17.5 to 3.5, every other
+  load/camber condition matches or beats staged, nothing regresses.
+- **Why this works where the full joint fit didn't:** identical reason
+  to Mz's version -- the load sweep never has to compete with the camber
+  sweep for the optimizer's attention, because it keeps its own
+  dedicated stage untouched. The only thing that changes is that the
+  Base-stage coefficients get to see real camber data before they're
+  frozen, which on this data turns out to help a little even though
+  Fy's camber sweep wasn't badly broken to begin with (unlike Mz's).
+- **Decision: recommended for promotion to `pacejka/fitters/fy.py`,
+  alongside the Mz version.** Two for two real tires, no regression on
+  either equation now that the hybrid (not full joint) approach is used.
+  This suggests the partial-staged pattern itself -- not just the
+  specific Mz fix -- may be the right general replacement for Base-then-
+  dIA staging in both term finders, worth keeping in mind if a third
+  tire's data or the longitudinal (Fx/Mx) term finders surface a similar
+  Base/dIA split later.
 
 ---
 
