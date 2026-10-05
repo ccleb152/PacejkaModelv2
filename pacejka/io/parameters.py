@@ -19,7 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from pacejka.model import FyCoefficients, MzCoefficients
+from pacejka.longitudinal_pipeline import LongitudinalFitResult
+from pacejka.model import FxCoefficients, FyCoefficients, MzCoefficients
 from pacejka.pipeline import CorneringFitResult
 
 _SCHEMA_VERSION = 1
@@ -88,4 +89,59 @@ def cornering_fit_to_dataframe(result: CorneringFitResult, tire: str, round_: in
                     "value": value,
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def longitudinal_fit_to_dict(
+    result: LongitudinalFitResult, tire: str, round_: int, run: int
+) -> dict:
+    """Build the JSON-serializable payload for one pure-slip Fx fit --
+    mirrors `cornering_fit_to_dict`'s shape for the Braking pipeline."""
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "tire": tire,
+        "round": round_,
+        "run": run,
+        "reference_fz_nom": result.reference_fz_nom,
+        "tested_fz_noms": [c.fz_nom for c in result.load_conditions],
+        "tested_ia_degs": [c.ia_nom for c in result.camber_conditions],
+        "fx_coefficients": dataclasses.asdict(result.fx.coefficients),
+    }
+
+
+def save_longitudinal_fit(result: LongitudinalFitResult, path, tire: str, round_: int, run: int) -> None:
+    """Write one pure-slip Fx fit's coefficients to `path` as JSON."""
+    payload = longitudinal_fit_to_dict(result, tire, round_, run)
+    Path(path).write_text(json.dumps(payload, indent=2))
+
+
+def load_fx_coefficients(payload: dict) -> FxCoefficients:
+    """Reconstruct FxCoefficients from a payload's `fx_coefficients` block
+    (or an equivalent standalone dict with the same field names)."""
+    fields = payload.get("fx_coefficients", payload)
+    return FxCoefficients(**fields)
+
+
+def load_longitudinal_fit_file(path) -> dict:
+    """Read back a JSON file written by `save_longitudinal_fit`."""
+    return json.loads(Path(path).read_text())
+
+
+def longitudinal_fit_to_dataframe(result: LongitudinalFitResult, tire: str, round_: int, run: int) -> pd.DataFrame:
+    """One tidy (long-format) row per fitted Fx coefficient -- the app's
+    CSV export for the Braking pipeline, mirroring
+    `cornering_fit_to_dataframe`."""
+    rows = []
+    for name, value in dataclasses.asdict(result.fx.coefficients).items():
+        rows.append(
+            {
+                "tire": tire,
+                "round": round_,
+                "run": run,
+                "reference_fz_nom": result.reference_fz_nom,
+                "quantity": "Fx",
+                "coefficient": name,
+                "value": value,
+            }
+        )
     return pd.DataFrame(rows)

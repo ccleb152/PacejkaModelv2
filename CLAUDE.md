@@ -113,7 +113,18 @@ yet ported) should be scoped when we get there:
   run_longitudinal_fit` orchestrating it the same way `pacejka.pipeline.
   run_cornering_fit` does for Fy/Mz. Real `RawDataFiles/BrakeDrive/` data
   exists for the 18x6-10 R20/LCO/R25B tires (Rounds 6/9) and is what this
-  was verified against.
+  was verified against. **Wired into the Streamlit app** (not just the
+  pipeline/library layer): `app/pages/tire_fitting.py`'s "Fit type"
+  selector (Cornering/Braking) branches catalog browsing, fit execution,
+  overlay plots (Fx vs. slip ratio SL), the coefficients table, and CSV/
+  graph export; `app/pages/fit_diagnostics.py` reads `st.session_state[
+  "fit_mode"]` to pick `pacejka.regression.fit_quality_table` vs.
+  `fit_quality_table_fx`. One subtlety: the page's own "Cornering"/
+  "Braking" choice maps to *two different* `test_type` vocabularies --
+  the pipeline layer's own "Cornering"/"Braking", and `pacejka.io.
+  tire_catalog`'s catalog folder names ("Cornering"/"BrakeDrive",
+  matching `RawDataFiles/`'s actual subfolders) -- see
+  `_CATALOG_TEST_TYPE_FOR_MODE` in that file.
 
   **Explicitly deferred, not started:** `Pacejka_Term_Finder_FX_V4_Redo.m`'s
   combined-slip Fx and combined-slip Fy stages (how a nonzero slip angle

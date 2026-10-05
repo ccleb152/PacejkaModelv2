@@ -7,16 +7,19 @@ Registered as a page (with an explicit title) by app/streamlit_app.py's
 st.navigation() call -- this module is never run directly by Streamlit.
 `sys.path`/`st.set_page_config` are handled once by that router, not here.
 
-Reads the same `st.session_state["fit_result"]` the tire-fitting page
-writes -- session state is shared across pages in a Streamlit multipage
-app, so no extra plumbing is needed to get the fit here.
+Reads the same `st.session_state["fit_result"]`/`["fit_mode"]` the
+tire-fitting page writes -- session state is shared across pages in a
+Streamlit multipage app, so no extra plumbing is needed to get the fit
+here. `fit_mode` ("Cornering" or "Braking") picks which quality-table
+function matches `fit_result`'s actual type (`CorneringFitResult` vs
+`LongitudinalFitResult`).
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
-from pacejka.regression import fit_quality_table
+from pacejka.regression import fit_quality_table, fit_quality_table_fx
 
 
 def _r_squared_color(value: float) -> str:
@@ -42,19 +45,20 @@ if "fit_result" not in st.session_state:
     st.stop()
 
 result = st.session_state["fit_result"]
+fit_mode = st.session_state.get("fit_mode", "Cornering")
 st.caption(
     f"Reference load Fz0' = {result.reference_fz_nom} lbf | "
     f"tested loads: {[c.fz_nom for c in result.load_conditions]} | "
     f"tested cambers: {[c.ia_nom for c in result.camber_conditions]} deg"
 )
 
-table = fit_quality_table(result)
+table = fit_quality_table(result) if fit_mode == "Cornering" else fit_quality_table_fx(result)
 
 st.subheader("Goodness of fit by condition")
 st.caption(
     "R² = 1.0 is a perfect match to the smoothed curve; 0.0 is no better than a "
     "flat line at that curve's own mean; negative is worse than that. RMSE/MAE/max "
-    "error are in the quantity's native unit (lbf for Fy, ft-lb for Mz). Rows are "
+    "error are in the quantity's native unit (lbf for Fy/Fx, ft-lb for Mz). Rows are "
     "sorted worst-first so the conditions most worth a second look show up top."
 )
 

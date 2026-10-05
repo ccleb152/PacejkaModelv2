@@ -14,11 +14,17 @@ from pacejka.io.parameters import (
     cornering_fit_to_dataframe,
     cornering_fit_to_dict,
     load_cornering_fit_file,
+    load_fx_coefficients,
     load_fy_coefficients,
+    load_longitudinal_fit_file,
     load_mz_coefficients,
+    longitudinal_fit_to_dataframe,
+    longitudinal_fit_to_dict,
     save_cornering_fit,
+    save_longitudinal_fit,
 )
-from pacejka.model import FyCoefficients, MzCoefficients, fy_terms, mz_pure
+from pacejka.longitudinal_pipeline import run_longitudinal_fit
+from pacejka.model import FxCoefficients, FyCoefficients, MzCoefficients, fx_pure, fy_terms, mz_pure
 from pacejka.pipeline import run_cornering_fit
 
 FY_COEFFS = FyCoefficients(
@@ -140,6 +146,115 @@ def test_cornering_fit_to_dataframe_is_tidy_one_row_per_coefficient(fit_result):
 def test_cornering_fit_to_dataframe_round_trips_through_csv(fit_result, tmp_path):
     df = cornering_fit_to_dataframe(fit_result, tire="TestTire", round_=9, run=32)
     csv_path = tmp_path / "coefficients.csv"
+    df.to_csv(csv_path, index=False)
+
+    reloaded = pd.read_csv(csv_path)
+    assert len(reloaded) == len(df)
+    assert list(reloaded.columns) == list(df.columns)
+
+
+# ---------------------------------------------------------------------------
+# Longitudinal (Fx) export -- mirrors the Fy/Mz tests above.
+# ---------------------------------------------------------------------------
+
+FX_COEFFS = FxCoefficients(
+    Cx1=1.6, Dx1=2.8, Dx2=-3.0, Dx3=10.0,
+    Ex1=-0.1, Ex2=0.05, Ex3=0.0, Ex4=0.02,
+    Hsx1=0.001, Hsx2=0.0002,
+    Kx1=80.0, Kx2=-8.0, Kx3=0.02,
+    Vsx1=2.0, Vsx2=-0.05,
+)
+
+
+def _braking_condition_rows(rng, fz_nom, ia_deg, n=300):
+    sl = np.linspace(-0.15, 0.13, n)
+    fz_n = fz_nom * LBF_TO_N
+    gamma_rad = np.radians(ia_deg)
+    fxo = fx_pure(fz_n, REFERENCE_FZ_NOM * LBF_TO_N, gamma_rad, sl, FX_COEFFS)
+    return pd.DataFrame(
+        {
+            "FZ": -fz_nom + rng.normal(scale=1.0, size=n),
+            "P": 12.0 + rng.normal(scale=0.1, size=n),
+            "IA": ia_deg + rng.normal(scale=0.02, size=n),
+            "SA": rng.normal(scale=0.02, size=n),
+            "SL": sl,
+            "V": 25.0 + rng.normal(scale=0.1, size=n),
+            "FX": fxo / LBF_TO_N + rng.normal(scale=2, size=n),
+            "FY": rng.normal(scale=2, size=n),
+            "MZ": rng.normal(scale=0.5, size=n),
+            "Vc": np.full(n, 25.0),
+            "RE": np.full(n, 9.0),
+            "RL": np.full(n, 8.8),
+            "N": np.full(n, 300.0),
+            "TSTC": np.full(n, 100.0),
+            "TSTI": np.full(n, 110.0),
+            "TSTO": np.full(n, 120.0),
+        }
+    )
+
+
+@pytest.fixture
+def longitudinal_fit_result():
+    # run_longitudinal_fit auto-picks the middle of the sorted detected
+    # loads as its reference (see run_longitudinal_fit's docstring) --
+    # for these 4 loads that's 200.0, so the camber-sweep rows must be
+    # recorded at 200.0 too, or they'd be looking for data at a load the
+    # pipeline never anchors the camber sweep to.
+    rng = np.random.RandomState(0)
+    blocks = [_braking_condition_rows(rng, fz, 0.0) for fz in (50.0, 150.0, 200.0, 250.0)]
+    blocks += [_braking_condition_rows(rng, 200.0, ia) for ia in (2.0, 4.0)]
+    samples = pd.concat(blocks, ignore_index=True)
+    return run_longitudinal_fit(samples, p_nom=12.0, v_nom=25.0)
+
+
+def test_longitudinal_fit_round_trips_through_a_file(longitudinal_fit_result, tmp_path):
+    path = tmp_path / "fx_fit.json"
+    save_longitudinal_fit(longitudinal_fit_result, path, tire="TestTire", round_=9, run=72)
+
+    payload = load_longitudinal_fit_file(path)
+    assert payload["tire"] == "TestTire"
+    assert payload["round"] == 9
+    assert payload["run"] == 72
+    assert payload["reference_fz_nom"] == longitudinal_fit_result.reference_fz_nom
+    assert payload["tested_fz_noms"] == [50.0, 150.0, 200.0, 250.0]
+    assert payload["tested_ia_degs"] == [0.0, 2.0, 4.0]
+
+    fx_back = load_fx_coefficients(payload)
+    assert fx_back == longitudinal_fit_result.fx.coefficients
+
+
+def test_longitudinal_fit_payload_is_plain_json_serializable(longitudinal_fit_result):
+    payload = longitudinal_fit_to_dict(longitudinal_fit_result, tire="TestTire", round_=9, run=72)
+    json.dumps(payload)
+
+
+def test_load_fx_coefficients_also_accepts_a_bare_coefficients_dict():
+    bare = {
+        "Cx1": 1.0, "Dx1": 1.0, "Dx2": 0.0, "Dx3": 0.0,
+        "Ex1": 0.0, "Ex2": 0.0, "Ex3": 0.0, "Ex4": 0.0,
+        "Hsx1": 0.0, "Hsx2": 0.0,
+        "Kx1": 1.0, "Kx2": 0.0, "Kx3": 0.0,
+        "Vsx1": 0.0, "Vsx2": 0.0,
+    }
+    coeffs = load_fx_coefficients(bare)
+    assert coeffs.Cx1 == 1.0
+
+
+def test_longitudinal_fit_to_dataframe_is_tidy_one_row_per_coefficient(longitudinal_fit_result):
+    df = longitudinal_fit_to_dataframe(longitudinal_fit_result, tire="TestTire", round_=9, run=72)
+    assert list(df.columns) == ["tire", "round", "run", "reference_fz_nom", "quantity", "coefficient", "value"]
+    # 15 Fx fields -- see FxCoefficients.
+    assert len(df) == 15
+    assert set(df["quantity"]) == {"Fx"}
+    assert (df["tire"] == "TestTire").all()
+
+    cx1_row = df[df["coefficient"] == "Cx1"].iloc[0]
+    assert cx1_row["value"] == longitudinal_fit_result.fx.coefficients.Cx1
+
+
+def test_longitudinal_fit_to_dataframe_round_trips_through_csv(longitudinal_fit_result, tmp_path):
+    df = longitudinal_fit_to_dataframe(longitudinal_fit_result, tire="TestTire", round_=9, run=72)
+    csv_path = tmp_path / "fx_coefficients.csv"
     df.to_csv(csv_path, index=False)
 
     reloaded = pd.read_csv(csv_path)
