@@ -21,6 +21,7 @@ import math
 import numpy as np
 import pandas as pd
 
+from pacejka.quality import MIN_SL_SWEEP_RANGE
 from pacejka.segmenting import segment_condition
 
 # The nominal loads (lbf) ParaRange.m's Cornering branch has acceptance
@@ -59,6 +60,16 @@ def detect_fz_levels(
     reasoning, applied one step earlier so a bogus load never gets this
     far into the pipeline at all.
 
+    For Braking, a candidate additionally needs an SL range of at least
+    `pacejka.quality.MIN_SL_SWEEP_RANGE` -- the same threshold
+    `check_condition_quality` enforces as a hard error there. Found on
+    the same real R20 data: Fz=100 lbf's segment had 2+ distinct SL
+    values (so the check above alone wasn't enough to exclude it) but
+    only a 0.015-wide range, nowhere near the ~0.3-wide range a real
+    sweep covers -- without this check it would be "detected", then
+    raise downstream once `check_condition_quality` ran on it, aborting
+    the whole fit instead of just excluding one bogus load.
+
     Returns the detected loads in ascending order.
     """
     swept_channel = "SL" if test_type == "Braking" else "SA"
@@ -72,8 +83,12 @@ def detect_fz_levels(
             # fz_nom or p_nom isn't one ParaRange has a band for at all --
             # not "no data for this candidate", just "not checkable this way".
             continue
-        if len(segment) >= min_samples and segment[swept_channel].nunique() >= 2:
-            detected.append(fz_nom)
+        swept = segment[swept_channel]
+        if len(segment) < min_samples or swept.nunique() < 2:
+            continue
+        if test_type == "Braking" and float(swept.max() - swept.min()) < MIN_SL_SWEEP_RANGE:
+            continue
+        detected.append(fz_nom)
     return sorted(detected)
 
 

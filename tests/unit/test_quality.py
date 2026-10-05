@@ -10,6 +10,7 @@ import pytest
 from pacejka.quality import (
     MIN_CONDITION_SAMPLES,
     MIN_SA_SWEEP_RANGE_DEG,
+    MIN_SL_SWEEP_RANGE,
     MIN_TOTAL_SAMPLES,
     check_condition_quality,
     check_round_quality,
@@ -125,3 +126,26 @@ def test_too_few_samples_short_circuits_the_sweep_check():
     issues = check_condition_quality(sparse_and_narrow, fz_nom=100.0, ia_nom=2.0)
     assert len(issues) == 1
     assert issues[0].severity == "error"
+
+
+def test_braking_narrow_sl_sweep_is_an_error_not_a_warning():
+    # Unlike Cornering's narrow-SA-sweep warning above, a narrow SL
+    # sweep for Braking is a hard error -- confirmed necessary against
+    # real R20 18x6-10 BrakeDrive data, where a transient segment with a
+    # 0.015-wide SL range produced a Pacejka fit with R^2=0.65 when
+    # allowed through as only a warning. See MODEL_CHANGES.md.
+    n = 50
+    sl = np.linspace(-0.01, 0.0, n)  # well under MIN_SL_SWEEP_RANGE
+    narrow = pd.DataFrame({"SL": sl, "FX": np.zeros(n)})
+    issues = check_condition_quality(narrow, fz_nom=100.0, ia_nom=0.0, test_type="Braking")
+    assert len(issues) == 1
+    assert issues[0].severity == "error"
+    assert "Fz=100" in issues[0].message
+
+
+def test_braking_sl_sweep_right_at_the_threshold_is_fine():
+    n = 300
+    sl = np.linspace(-MIN_SL_SWEEP_RANGE / 2, MIN_SL_SWEEP_RANGE / 2, n)
+    exact = pd.DataFrame({"SL": sl, "FX": np.zeros(n)})
+    issues = check_condition_quality(exact, fz_nom=100.0, ia_nom=0.0, test_type="Braking")
+    assert issues == []

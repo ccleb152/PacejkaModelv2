@@ -83,3 +83,42 @@ def test_min_samples_filters_out_transient_noise(synthetic_round):
     detected = detect_camber_levels(augmented, fz_nom=150.0, p_nom=12, v_nom=25)
     assert 1.0 not in detected
     assert detected == [0.0, 2.0, 4.0]
+
+
+def _braking_block(rng, fz_nom, sl_min=-0.15, sl_max=0.13, n=150):
+    sl = np.linspace(sl_min, sl_max, n)
+    return pd.DataFrame(
+        {
+            "FZ": -fz_nom + rng.normal(scale=1.5, size=n),
+            "P": 12.0 + rng.normal(scale=0.1, size=n),
+            "IA": rng.normal(scale=0.02, size=n),
+            "SA": rng.normal(scale=0.02, size=n),  # pinned near 0, per para_range's Braking SA=0 band
+            "SL": sl,
+            "V": 25.0 + rng.normal(scale=0.1, size=n),
+            "FX": fz_nom * np.tanh(sl * 15) + rng.normal(scale=5, size=n),
+            "FY": rng.normal(scale=5, size=n),
+            "MZ": rng.normal(scale=2, size=n),
+            "RE": np.full(n, 9.0),
+            "RL": np.full(n, 8.8),
+            "N": np.full(n, 300.0),
+            "TSTC": np.full(n, 100.0),
+            "TSTI": np.full(n, 110.0),
+            "TSTO": np.full(n, 120.0),
+        }
+    )
+
+
+def test_braking_excludes_a_detected_level_whose_sl_sweep_is_too_narrow():
+    # Regression test: a transient/settling segment can have >= min_samples
+    # and >= 2 distinct SL values (clearing the generic checks) while still
+    # being nowhere near a real ~0.3-wide braking/drive sweep -- confirmed
+    # against real R20 18x6-10 BrakeDrive data, where an auto-detected
+    # Fz=100 lbf "load level" had a 0.015-wide SL range. See
+    # pacejka/quality.py's MIN_SL_SWEEP_RANGE and MODEL_CHANGES.md.
+    rng = np.random.RandomState(4)
+    real_sweep = _braking_block(rng, 150.0)
+    transient = _braking_block(rng, 100.0, sl_min=-0.01, sl_max=0.0, n=50)
+    samples = pd.concat([real_sweep, transient], ignore_index=True)
+
+    detected = detect_fz_levels(samples, p_nom=12, v_nom=25, test_type="Braking")
+    assert detected == [150.0]

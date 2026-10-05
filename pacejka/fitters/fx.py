@@ -99,6 +99,37 @@ def fit_kappa_sweep(condition: pd.DataFrame) -> KappaSweepSplines:
     )
 
 
+def trim_to_raw_domain(splines: KappaSweepSplines, sl_min: float, sl_max: float) -> KappaSweepSplines:
+    """Restrict a `KappaSweepSplines` to the portion of `SL_GRID` actually
+    covered by the condition's raw SL samples (`[sl_min, sl_max]`).
+
+    Not a MATLAB port -- `Raw_Data_Fitter_Fx_V2.m` evaluates every
+    condition's smoothing spline on the same fixed `SLRange`, regardless
+    of what that condition's own raw data actually covers, implicitly
+    assuming every tested load is swept across the full range. That
+    assumption holds for most real conditions (LCO/R25B 18x6-10
+    BrakeDrive: every condition's raw SL range tracks the fixed grid's
+    edges within ~0.02) but not all: on real R20 18x6-10 data, the
+    Fz=50 lbf condition's raw SL only reaches 0.115, short of the grid's
+    0.141 edge, and `csaps` extrapolates wildly past a spline's fitted
+    domain (confirmed: the untrimmed spline's value at SL=0.141 for that
+    condition is +2487 N, physically impossible for a 50 lbf load). Since
+    that extrapolated tail would otherwise feed straight into both
+    `fit_fx_coefficients`' fitting target (via `sweep_point_from_
+    kappa_sweep`) and the R^2 quality metric, `pacejka.longitudinal_
+    pipeline` trims each condition to its own real domain before either
+    consumes it. See MODEL_CHANGES.md.
+    """
+    mask = (splines.sl_grid >= sl_min) & (splines.sl_grid <= sl_max)
+    return KappaSweepSplines(
+        sl_grid=splines.sl_grid[mask],
+        fx=splines.fx[mask],
+        fy=splines.fy[mask],
+        mz=splines.mz[mask],
+        vc=splines.vc[mask],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pacejka_Term_Finder_FX_V4_Redo.m -- pure-slip stages only (see module
 # docstring for the deferred combined-slip stages)

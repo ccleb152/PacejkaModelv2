@@ -202,13 +202,25 @@ def check_condition_quality(
     if test_type == "Braking":
         sl_range = float(swept.max() - swept.min())
         if sl_range < min_sl_range:
+            # Unlike Cornering's SA-range check below (a warning -- a
+            # narrow but real cornering sweep still has plenty of usable
+            # points), this is an error: confirmed against real R20
+            # 18x6-10 BrakeDrive data, where an auto-detected Fz=100 lbf
+            # "load level" had a 0.015-wide SL range (vs. a real sweep's
+            # ~0.3) -- a transient/settling segment one notch too wide to
+            # be caught by the nunique check above, but still nowhere
+            # near wide enough to fit a meaningful SL->FX curve from.
+            # Fitting it anyway produced a Pacejka curve with R^2=0.65
+            # against the smoothed spline, dragging down that condition
+            # and (via the shared dFz stage) degrading nearby conditions'
+            # fits too. See MODEL_CHANGES.md.
             issues.append(
                 QualityIssue(
-                    "warning",
+                    "error",
                     f"{label}: the slip-ratio sweep only spans {sl_range:.3f} "
                     f"peak-to-peak -- a full braking/drive sweep is normally "
-                    f">= {min_sl_range:g}. This condition's data may be an "
-                    f"incomplete sweep rather than a full one.",
+                    f">= {min_sl_range:g}. This looks like a transient/settling "
+                    f"segment, not a condition that was actually swept.",
                 )
             )
         return issues

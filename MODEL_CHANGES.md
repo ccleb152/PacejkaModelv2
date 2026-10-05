@@ -19,6 +19,56 @@ and when.
 
 ---
 
+## 2026-10-06 -- Fix the R20 Fz=50/100 fit-quality gap flagged in the Fx entry below
+
+**What:** Follow-up to the open item in the entry below (R20 18x6-10's
+Fz=50/100 lbf conditions fitting poorly, R^2 0.65-0.77). Two independent,
+real causes, both fixed:
+- `pacejka.quality.check_condition_quality`'s Braking slip-ratio-range
+  check is now an **error**, not a warning. R20's auto-detected Fz=100
+  lbf "load level" had 2+ distinct SL values (enough to pass the
+  nunique check added earlier) but only a 0.015-wide SL range -- a
+  transient/settling segment, not a real ~0.3-wide sweep. Fitting it
+  anyway produced a Pacejka curve with R^2=0.65 against the smoothed
+  spline for that condition alone, and (via the shared dFz stage)
+  degraded the fit everywhere else too.
+  `pacejka.detection.detect_fz_levels` gained the matching check (same
+  `MIN_SL_SWEEP_RANGE` threshold, imported from `pacejka.quality` rather
+  than duplicated) so this class of candidate is never reported as
+  detected in the first place, rather than being detected and then
+  raising downstream and aborting the whole fit.
+- New `pacejka.fitters.fx.trim_to_raw_domain`, applied in
+  `pacejka.longitudinal_pipeline._process_condition` right after
+  `fit_kappa_sweep`: restricts each condition's spline evaluation to the
+  portion of the fixed `SL_GRID` actually covered by that condition's
+  raw SL samples, before either fitting or quality-scoring sees it.
+  R20's Fz=50 lbf condition's raw SL only reached 0.115, short of the
+  grid's 0.141 edge; `csaps` extrapolates unreliably past a spline's
+  fitted domain, and that extrapolated tail (confirmed: +2487 N at
+  SL=0.141 for a *50 lbf* load -- physically impossible, mu > 11) was
+  feeding straight into both the dFz-stage fit target and the R^2 metric.
+
+**Why:** `Raw_Data_Fitter_Fx_V2.m`'s own design evaluates every
+condition's smoothing spline on one fixed `SLRange`, implicitly assuming
+every tested load gets swept across the same full range. That holds for
+LCO/R25B (every condition's raw SL range tracks the grid's edges within
+~0.02) but not for R20's Fz=50 specifically -- not a MATLAB bug to
+preserve, just an assumption that happens to fail on one real tire's
+data, confirmed by direct inspection (see the diagnostic numbers above)
+rather than guessed at.
+
+**Verified with:** Full suite still **124 passed** (no test changes
+needed -- the fix lives in the orchestration layer, not the ported
+fitting functions themselves). Real-data re-check: R20 now auto-detects
+the same clean 4-point load sweep (50/150/200/250 lbf) as LCO/R25B
+(Fz=100 excluded entirely), with R^2 0.939 at Fz=50 (was 0.774) and
+>= 0.996 at every other load/camber condition -- on par with LCO/R25B.
+
+**Not changed:** `fit_fx_coefficients`'s fitting method (still the
+partial-staged hybrid, unchanged by this entry) or any Fy/Mz behavior.
+
+---
+
 ## 2026-10-06 -- Add pure-slip Fx (longitudinal) fitting pipeline
 
 **What:** Ported the pure-longitudinal-slip portion of
