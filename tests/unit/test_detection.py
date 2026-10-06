@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pacejka.detection import detect_camber_levels, detect_fz_levels
+from pacejka.detection import detect_camber_levels, detect_fz_levels, detect_sa_levels
 
 REQUIRED_COLUMNS = ["FZ", "P", "IA", "SA", "V", "FX", "FY", "MZ", "RE", "RL", "N", "TSTC", "TSTI", "TSTO"]
 
@@ -85,14 +85,14 @@ def test_min_samples_filters_out_transient_noise(synthetic_round):
     assert detected == [0.0, 2.0, 4.0]
 
 
-def _braking_block(rng, fz_nom, sl_min=-0.15, sl_max=0.13, n=150):
+def _braking_block(rng, fz_nom, sl_min=-0.15, sl_max=0.13, n=150, sa_nom=0.0):
     sl = np.linspace(sl_min, sl_max, n)
     return pd.DataFrame(
         {
             "FZ": -fz_nom + rng.normal(scale=1.5, size=n),
             "P": 12.0 + rng.normal(scale=0.1, size=n),
             "IA": rng.normal(scale=0.02, size=n),
-            "SA": rng.normal(scale=0.02, size=n),  # pinned near 0, per para_range's Braking SA=0 band
+            "SA": sa_nom + rng.normal(scale=0.02, size=n),  # see para_range's _BRAKING_SA_BANDS
             "SL": sl,
             "V": 25.0 + rng.normal(scale=0.1, size=n),
             "FX": fz_nom * np.tanh(sl * 15) + rng.normal(scale=5, size=n),
@@ -122,3 +122,32 @@ def test_braking_excludes_a_detected_level_whose_sl_sweep_is_too_narrow():
 
     detected = detect_fz_levels(samples, p_nom=12, v_nom=25, test_type="Braking")
     assert detected == [150.0]
+
+
+def test_detects_every_tested_sa_level_at_one_load_and_camber():
+    rng = np.random.RandomState(5)
+    blocks = [_braking_block(rng, 150.0, sa_nom=sa) for sa in (0.0, -3.0, -6.0)]
+    samples = pd.concat(blocks, ignore_index=True)
+    detected = detect_sa_levels(samples, fz_nom=150.0, ia_nom=0.0, p_nom=12, v_nom=25)
+    assert detected == [-6.0, -3.0, 0.0]
+
+
+def test_sa_levels_excludes_a_too_narrow_sl_sweep():
+    # Same class of regression as detect_fz_levels's narrow-sweep test --
+    # a transient segment at a real nominal SA band shouldn't count as a
+    # detected combined-slip condition if its SL range is too narrow to
+    # fit against.
+    rng = np.random.RandomState(6)
+    real_sweep = _braking_block(rng, 150.0, sa_nom=-3.0)
+    transient = _braking_block(rng, 150.0, sl_min=-0.01, sl_max=0.0, n=50, sa_nom=-6.0)
+    samples = pd.concat([real_sweep, transient], ignore_index=True)
+
+    detected = detect_sa_levels(samples, fz_nom=150.0, ia_nom=0.0, p_nom=12, v_nom=25)
+    assert detected == [-3.0]
+
+
+def test_detects_no_sa_levels_that_were_never_tested():
+    rng = np.random.RandomState(7)
+    samples = _braking_block(rng, 150.0, sa_nom=0.0)
+    detected = detect_sa_levels(samples, fz_nom=150.0, ia_nom=0.0, p_nom=12, v_nom=25)
+    assert detected == [0.0]
