@@ -31,6 +31,17 @@ from pacejka.segmenting import segment_condition
 # first (see CLAUDE.md quirk #4).
 CANDIDATE_FZ_NOMS = (50.0, 100.0, 150.0, 200.0, 250.0, 350.0)
 
+# The nominal slip angles (deg) ParaRange.m's Braking branch has
+# acceptance bands for -- see pacejka/ranges.py's _BRAKING_SA_BANDS.
+# Unlike Cornering (one fixed +/-15 deg band regardless of SA_Nom), a
+# Braking round holds slip angle at one of a small fixed set of nominal
+# values while sweeping slip ratio -- this is how the original tool's
+# combined-slip stages are meant to get real alpha != 0 data, though its
+# own hardcoded SweepVars.SA=[0] (CLAUDE.md quirk #24) never read any
+# value but the first. Confirmed present, full-width, at every tested
+# load/camber in the team's real 18x6-10 BrakeDrive rounds.
+CANDIDATE_SA_NOMS = (0.0, -3.0, -6.0)
+
 DEFAULT_MIN_SAMPLES = 10
 
 
@@ -89,6 +100,52 @@ def detect_fz_levels(
         if test_type == "Braking" and float(swept.max() - swept.min()) < MIN_SL_SWEEP_RANGE:
             continue
         detected.append(fz_nom)
+    return sorted(detected)
+
+
+def detect_sa_levels(
+    samples: pd.DataFrame,
+    fz_nom: float,
+    ia_nom: float,
+    p_nom: float,
+    v_nom: float,
+    candidates=CANDIDATE_SA_NOMS,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+) -> list[float]:
+    """Which of the standard nominal slip angles have real combined-slip
+    (SL-swept) data in this Braking round, at the given load/camber.
+
+    Braking-only (no `test_type` parameter): Cornering has no equivalent
+    concept -- its SA band is one fixed +/-15 deg range covering the
+    whole slip-angle sweep itself, not a small set of discrete nominal
+    angles to detect among. This is the combined-slip counterpart to
+    `detect_fz_levels`: the swept channel it checks is always SL (a
+    Braking round's SL is swept within each fixed-SA condition, the
+    mirror image of `detect_fz_levels`'s own SA/SL check), and the same
+    two robustness requirements apply for the same reason -- a candidate
+    must have at least 2 distinct SL values and an SL range of at least
+    `pacejka.quality.MIN_SL_SWEEP_RANGE`, so a transient/calibration
+    segment is never reported as a detected slip-angle level only to
+    crash or get fit downstream. Real data check: all three of these
+    candidates have substantial, full-width SL sweeps at every tested
+    load and camber in the team's real 18x6-10 BrakeDrive rounds.
+
+    Returns the detected slip angles in ascending order.
+    """
+    detected = []
+    for sa_nom in candidates:
+        try:
+            segment = segment_condition(
+                samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=ia_nom, sa_nom=sa_nom, v_nom=v_nom, test_type="Braking"
+            )
+        except ValueError:
+            continue
+        sl = segment["SL"]
+        if len(segment) < min_samples or sl.nunique() < 2:
+            continue
+        if float(sl.max() - sl.min()) < MIN_SL_SWEEP_RANGE:
+            continue
+        detected.append(sa_nom)
     return sorted(detected)
 
 

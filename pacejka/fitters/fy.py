@@ -1,9 +1,21 @@
-"""Port of Raw_Data_Fitter_Fy_V3.m and Pacejka_Term_Finder_FY_V3.m.
+"""Port of Raw_Data_Fitter_Fy_V3.m and Pacejka_Term_Finder_FY_V3.m (pure
+lateral slip), plus the combined-slip-Fy stage of
+`Pacejka_Term_Finder_FX_V4_Redo.m`.
 
 (Raw_Data_Fitter_Fy_V3.m's function is actually named
 `Raw_Data_Fitter_Fy_V2` -- a filename/function-name mismatch; MATLAB
 resolves calls by filename, so this is dead cosmetic drift, not a
 versioning clue. See CLAUDE.md quirk #1.)
+
+Combined-slip Fy lives here, next to the pure-slip Fy it's built on
+(`fy_combined`/`fy_pure` in `pacejka.model`), rather than in
+`pacejka.fitters.fx` where its MATLAB source file's combined-slip *Fx*
+stage lives -- the same "group by output quantity, not by source file"
+choice CLAUDE.md's migration workflow already makes for `model.py`. Its
+raw data (`CombinedFySweepPoint`) is built from a `pacejka.fitters.fx.
+KappaSweepSplines` -- a Braking round's SL-sweep-at-fixed-SA condition
+records FX *and* FY simultaneously, so the same spline-smoothing leaf
+function serves both.
 """
 
 from __future__ import annotations
@@ -14,8 +26,9 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from pacejka.fitters.fx import KappaSweepSplines
 from pacejka.fitting import fit_stage, split_fixed_fields
-from pacejka.model import FyCoefficients, fy_pure
+from pacejka.model import FyCoefficients, FyCombinedCoefficients, fy_combined, fy_pure
 from pacejka.splines import fit_smoothing_spline
 
 # MATLAB's literal lbf->N conversion factor, used throughout the term
@@ -340,4 +353,216 @@ def fit_fy_coefficients(
         base_fit_fy_n=base_fit_fy_n,
         load_sweep_fit_fy_n=load_sweep_fit_fy_n,
         camber_sweep_fit_fy_n=camber_sweep_fit_fy_n,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pacejka_Term_Finder_FX_V4_Redo.m -- combined-slip Fy stage
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CombinedFySweepPoint:
+    """One fixed-(Fz, IA, SA) Braking condition's smoothed kappa -> Fy
+    curve, in SI units, tagged with the physical load/camber/slip-angle it
+    was recorded at. Build with `combined_sweep_point_from_kappa_sweep`.
+
+    Mirrors `pacejka.fitters.fx.CombinedFxSweepPoint` exactly, just reading
+    FY instead of FX off the same `KappaSweepSplines` -- a Braking round's
+    SL sweep at one fixed (Fz, IA, SA) records both channels at once, so
+    the same segmented/smoothed data serves both fitters.
+    """
+
+    fz_n: float
+    gamma_star: float
+    alpha_rad: float
+    kappa: np.ndarray
+    fy_n: np.ndarray
+
+
+def combined_sweep_point_from_kappa_sweep(
+    splines: KappaSweepSplines, fz_lbf: float, ia_deg: float, sa_deg: float
+) -> CombinedFySweepPoint:
+    """Build a CombinedFySweepPoint from `pacejka.fitters.fx.fit_kappa_sweep`'s
+    output plus the segmented condition's nominal load (lbf), camber (deg),
+    and slip angle (deg).
+
+    Uses `gamma_star = sin(radians(ia_deg))`, matching `fy_pure`'s own
+    camber convention (and `sweep_point_from_alpha_sweep`'s), not the plain
+    radian `gamma_rad` `fx_combined`/`combined_sweep_point_from_kappa_sweep`
+    use for Fx -- `fy_combined` calls into `fy_pure`, which expects
+    `gamma_star`, not `gamma_rad`.
+    """
+    return CombinedFySweepPoint(
+        fz_n=fz_lbf * LBF_TO_N,
+        gamma_star=float(np.sin(np.radians(ia_deg))),
+        alpha_rad=float(np.radians(sa_deg)),
+        kappa=splines.sl_grid,
+        fy_n=splines.fy * LBF_TO_N,
+    )
+
+
+# p0 in Pacejka_Term_Finder_FX_V4_Redo.m's combined-slip Fy (CBaseFit/
+# CdFzFit/CdIAFit) section. All 1.0 in the source -- no more physically
+# motivated initial guess is documented there, unlike the pure-slip stages.
+# Confirmed via synthetic smoke test: this all-ones p0 converges to a
+# noise-level fit when the true coefficients are within a modest range of
+# 1.0, but can land in a worse local optimum for coefficients far from it
+# (e.g. a synthetic By4 of -100 or Vsy6 of 5 recovered a visibly worse fit
+# than one of -20/3) -- an inherent property of nonlinear least-squares
+# given a generic starting point, not specific to this port, and no worse
+# than MATLAB's own `nlinfit`/`lsqcurvefit` would do from the same p0. Real
+# fits against actual tire data should be checked against this risk the
+# same way quirk #9's Ky1 bounds are flagged for re-tuning, not assumed
+# correct from a single run.
+_COMBINED_FY_P0 = dict(
+    By1=1.0, By2=1.0, By3=1.0, By4=1.0,
+    Cy1=1.0,
+    Ey1=1.0, Ey2=1.0,
+    Hsy1=1.0, Hsy2=1.0,
+    Vsy1=1.0, Vsy2=1.0, Vsy3=1.0, Vsy4=1.0, Vsy5=1.0, Vsy6=1.0,
+)
+
+# Base coefficients: historically fit alone, against data recorded at the
+# single hardcoded SA_vals=0 (see CLAUDE.md quirk #24/#26 -- at alpha=0,
+# By1/By2/By3 collapse into one jointly-unidentifiable constant via
+# cos(atan(By2*(0-By3))), and Vsy4 has zero effect since
+# cos(atan(Vsy4*0))==1 regardless of Vsy4). Fixed the same way as the
+# pure-slip stages: real data spanning the tested nonzero slip angles
+# (0/-3/-6 deg, `pacejka.detection.detect_sa_levels`), fit jointly with the
+# dIA fields against the reference condition plus the full camber sweep --
+# the same partial-staged-hybrid pattern as `fit_fy_coefficients`/
+# `fit_mz_coefficients`/`fit_combined_fx_coefficients`. Bounds are not
+# given by the MATLAB source (CBaseFit/CdFzFit/CdIAFit use plain,
+# unbounded `nlinfit`) -- the ranges below are a permissive, explicitly
+# uncommitted bracket around each field's p0, mirroring the same
+# no-unilateral-fix convention `pacejka.fitters.fx`'s combined-slip Base
+# bounds already use.
+_COMBINED_FY_BASE_FIELDS = ("By1", "By2", "By3", "Cy1", "Ey1", "Hsy1", "Vsy1", "Vsy4", "Vsy5", "Vsy6")
+_COMBINED_FY_BASE_BOUNDS = (
+    (0.0, 25.0),
+    (-10.0, 10.0),
+    (-50.0, 50.0),
+    (-50.0, 50.0),
+    (-50.0, 50.0),
+    (-50.0, 50.0),
+    (-50.0, 50.0),
+    (-50.0, 2.0),
+    (-50.0, 2.0),
+    (-50.0, 50.0),
+)
+
+# dFz coefficients: fit across every tested load at zero camber and the
+# reference slip angle, as its own, separate stage -- same pattern as the
+# pure-slip dFz stage. Matches CLAUDE.md quirk #14's load-sweep fix,
+# applied to combined-slip Fy's own dFz fields.
+_COMBINED_FY_DFZ_FIELDS = ("Ey2", "Hsy2", "Vsy2")
+_COMBINED_FY_DFZ_BOUNDS = ((-5.0, 5.0), (-0.01, 0.01), (-1.0, 1.0))
+
+# dIA coefficients: fit jointly with Base (see _COMBINED_FY_BASE_FIELDS's
+# docstring) across every tested camber angle at the reference load and
+# slip angle.
+_COMBINED_FY_DIA_FIELDS = ("By4", "Vsy3")
+_COMBINED_FY_DIA_BOUNDS = ((-2000.0, 500.0), (-50.0, 50.0))
+
+
+@dataclass(frozen=True)
+class CombinedFyFitResult:
+    """Fitted Magic Formula combined-slip-Fy coefficients plus the fitted
+    curve at each input condition, for diagnostic plotting.
+
+    Mirrors `pacejka.fitters.fx.CombinedFxFitResult`'s shape. There is no
+    deferred cross-term field here (unlike `FyFitResult.Ky7`/`.Vsy4`) --
+    every field combined-slip Fy's own MATLAB source declares is fit by
+    one of the three stages above.
+    """
+
+    coefficients: FyCombinedCoefficients
+    base_fit_fy_n: np.ndarray
+    alpha_sweep_fit_fy_n: list[np.ndarray]
+    load_sweep_fit_fy_n: list[np.ndarray]
+    camber_sweep_fit_fy_n: list[np.ndarray]
+
+
+def _fit_combined_fy_stage(field_names, x0, points, fz0_prime, pure_coeffs, fixed_values, bounds=None):
+    """Combined-slip-Fy-specific residual closure over
+    `pacejka.fitting.fit_stage`. Mirrors
+    `pacejka.fitters.fx._fit_combined_fx_stage`."""
+    kappa = np.concatenate([p.kappa for p in points])
+    fz_n = np.concatenate([np.full_like(p.kappa, p.fz_n) for p in points])
+    gamma_star = np.concatenate([np.full_like(p.kappa, p.gamma_star) for p in points])
+    alpha_rad = np.concatenate([np.full_like(p.kappa, p.alpha_rad) for p in points])
+    target_fy_n = np.concatenate([p.fy_n for p in points])
+
+    def residuals(x):
+        values = dict(fixed_values)
+        values.update(zip(field_names, x))
+        fyc = fy_combined(fz_n, fz0_prime, gamma_star, kappa, alpha_rad, pure_coeffs, FyCombinedCoefficients(**values))
+        return fyc - target_fy_n
+
+    fitted_x = fit_stage(residuals, x0, bounds=bounds)
+    return dict(zip(field_names, fitted_x))
+
+
+def fit_combined_fy_coefficients(
+    pure_coeffs: FyCoefficients,
+    base: CombinedFySweepPoint,
+    alpha_sweep: Sequence[CombinedFySweepPoint],
+    load_sweep: Sequence[CombinedFySweepPoint],
+    camber_sweep: Sequence[CombinedFySweepPoint],
+) -> CombinedFyFitResult:
+    """Fit the Magic Formula combined-slip-Fy coefficients.
+
+    `pure_coeffs` is the already-fit pure-slip FyCoefficients (`fy_combined`
+    calls into `fy_pure` internally -- see `pacejka.model.fy_combined`).
+    `base` anchors the reference load Fz0' (dfz=0), zero camber, and the
+    reference slip angle (dfz=0, alpha=0), and together with `alpha_sweep`
+    (every other nominal slip angle tested at the reference load/camber)
+    and `camber_sweep` (every nominal camber tested at the reference
+    load/slip-angle) is used for the Base+dIA stage. `load_sweep` (every
+    nominal load tested at zero camber/reference slip angle, including
+    `base`'s own condition) is used for the dFz stage.
+
+    Port of Pacejka_Term_Finder_FX_V4_Redo.m's combined-slip Fy stage --
+    see CLAUDE.md quirks #24/#26 (hardcoded single-slip-angle data, partial
+    Base-stage degeneracy at alpha=0) -- mirroring
+    `pacejka.fitters.fx.fit_combined_fx_coefficients`'s structure, and
+    using the same partial-staged hybrid (Base+dIA jointly, dFz separate)
+    established for the pure-slip stages.
+    """
+    fz0_prime = base.fz_n
+    coeffs_values = dict(_COMBINED_FY_P0)
+
+    base_dia_fields = _COMBINED_FY_BASE_FIELDS + _COMBINED_FY_DIA_FIELDS
+    base_dia_bounds = _COMBINED_FY_BASE_BOUNDS + _COMBINED_FY_DIA_BOUNDS
+    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(base_dia_fields, base_dia_bounds, coeffs_values)
+    coeffs_values.update(fixed_from_bounds)
+    stage1_points = [base] + list(alpha_sweep) + list(camber_sweep)
+    x0 = [coeffs_values[name] for name in free_fields]
+    fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
+    coeffs_values.update(
+        _fit_combined_fy_stage(free_fields, x0, stage1_points, fz0_prime, pure_coeffs, fixed, bounds=free_bounds)
+    )
+
+    free_fields, free_bounds, fixed_from_bounds = split_fixed_fields(
+        _COMBINED_FY_DFZ_FIELDS, _COMBINED_FY_DFZ_BOUNDS, coeffs_values
+    )
+    coeffs_values.update(fixed_from_bounds)
+    x0 = [coeffs_values[name] for name in free_fields]
+    fixed = {k: v for k, v in coeffs_values.items() if k not in free_fields}
+    coeffs_values.update(
+        _fit_combined_fy_stage(free_fields, x0, load_sweep, fz0_prime, pure_coeffs, fixed, bounds=free_bounds)
+    )
+
+    final_coeffs = FyCombinedCoefficients(**coeffs_values)
+
+    def _eval(p: CombinedFySweepPoint) -> np.ndarray:
+        return fy_combined(p.fz_n, fz0_prime, p.gamma_star, p.kappa, p.alpha_rad, pure_coeffs, final_coeffs)
+
+    return CombinedFyFitResult(
+        coefficients=final_coeffs,
+        base_fit_fy_n=_eval(base),
+        alpha_sweep_fit_fy_n=[_eval(p) for p in alpha_sweep],
+        load_sweep_fit_fy_n=[_eval(p) for p in load_sweep],
+        camber_sweep_fit_fy_n=[_eval(p) for p in camber_sweep],
     )

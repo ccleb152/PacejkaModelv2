@@ -360,3 +360,178 @@ def fx_pure(fz, fz0_prime, gamma_rad, kappa, coeffs: FxCoefficients):
     s_vx = fz * (p.Vsx1 + p.Vsx2 * dfz)
 
     return dx * np.sin(cx * np.arctan(bx * kappa_x - ex * (bx * kappa_x - np.arctan(bx * kappa_x)))) + s_vx
+
+
+@dataclass(frozen=True)
+class FxCombinedCoefficients:
+    """Fitted combined-slip Fx weighting coefficients -- how a nonzero
+    lateral slip angle reduces the pure-slip longitudinal force
+    (`Pacejka_Term_Finder_FX_V4_Redo.m`'s `CBaseFit`/`CdFzFit`/`CdIAFit`
+    closures). A separate namespace from `FxCoefficients` (the pure-slip
+    equation these weight), not an extension of it -- `fx_combined` takes
+    both.
+
+    Field names match the MATLAB `r0`/`Rystat`-table `Variable` strings
+    (`Bx1`, `Bx2`, `Bx3`, `Cx1`, `Ex1`, `Ex2`, `Hsx1`) verbatim. `Cx1` here
+    is an independent coefficient from pure-slip `FxCoefficients.Cx1` --
+    MATLAB keeps them in separate structs (`r.*` vs `p.*`); naming the
+    field identically here is a deliberate fidelity choice, not a
+    collision (Python's separate dataclasses keep them distinct).
+    """
+
+    Bx1: float
+    Bx2: float
+    Bx3: float
+    Cx1: float
+    Ex1: float
+    Ex2: float
+    Hsx1: float
+
+
+def fx_combined(
+    fz, fz0_prime, gamma_rad, kappa, alpha_rad,
+    pure_coeffs: FxCoefficients, comb_coeffs: FxCombinedCoefficients,
+):
+    """Combined-slip longitudinal force: the pure-slip `fx_pure` curve
+    weighted by `G_xa`, a function of both `kappa` (this equation's own
+    x-axis) and the fixed slip angle `alpha_rad` the whole `kappa` sweep
+    was recorded at (a combined-slip test holds alpha constant while
+    sweeping slip ratio, unlike the pure-slip tests' SA=0 convention).
+
+    Unifies the term finder's three per-stage closures (`CBaseFit.F_xc`,
+    `CdFzFit.F_xc`, `CdIAFit.F_xc`) into one equation, the same way
+    `fx_pure` unifies the pure-slip stages: `gamma_rad=0` collapses the
+    `B_xa` term to `CBaseFit`'s/`CdFzFit`'s form; `fz=fz0_prime` zeroes
+    `dfz` so `E_xa` collapses to `CBaseFit`'s/`CdIAFit`'s form. Verified
+    field-by-field against each stage's closure (e.g. `CdIAFit.B_xa`'s
+    `(Xcb_out(1)+XcdIA(1)*gamma^2)*cos(atan(Xcb_out(2)*kappa))` is this
+    function's `bxa` with `Bx1=Xcb_out(1)`, `Bx3=XcdIA(1)`,
+    `Bx2=Xcb_out(2)`).
+
+    **A real bug this fixes, found while porting (not preserved):** the
+    original hardcodes `alpha_star` (here, `alpha_rad`) to a single value,
+    `SA_vals = [0]`, across all three stages. At `alpha_rad=0` exactly,
+    `Alpha_S = alpha_rad + S_Hxa` reduces to exactly `S_Hxa` -- the same
+    input `G_xao` is defined at -- so `G_xa = G_xao / G_xao = 1`
+    *identically*, for any values of `Bx1/Bx2/Bx3/Cx1/Ex1/Ex2/Hsx1`
+    whatsoever. That makes `CBaseFit.F_xc`/`CdFzFit.F_xc`/`CdIAFit.F_xc`
+    mathematically equal to the plain pure-slip curve, full stop -- not
+    "weakly identified", but a true identity with zero gradient signal
+    for any of the seven combined-slip coefficients. The historical
+    `lsqcurvefit` calls for these stages were fitting parameters that
+    could not possibly affect the objective function, the same failure
+    mode as quirks #7/#11/#20/#21 but total rather than partial. Real
+    multi-alpha data (SA = 0, -3, -6 deg, confirmed present across every
+    tested load and camber in the team's actual BrakeDrive rounds -- see
+    CLAUDE.md) breaks the degeneracy: `fit_fx_combined_coefficients`
+    (`pacejka.fitters.fx`) fits against a real `alpha_sweep`, not one
+    hardcoded value.
+    """
+    fx0 = fx_pure(fz, fz0_prime, gamma_rad, kappa, pure_coeffs)
+    c = comb_coeffs
+    dfz = (fz - fz0_prime) / fz0_prime
+
+    bxa = (c.Bx1 + c.Bx3 * gamma_rad**2) * np.cos(np.arctan(c.Bx2 * kappa))
+    cxa = c.Cx1
+    exa = c.Ex1 + c.Ex2 * dfz
+    s_hxa = c.Hsx1
+    alpha_s = alpha_rad + s_hxa
+
+    g_xao = np.cos(cxa * np.arctan(bxa * s_hxa - exa * (bxa * s_hxa - np.arctan(bxa * s_hxa))))
+    g_xa = (
+        np.cos(cxa * np.arctan(bxa * alpha_s - exa * (bxa * alpha_s - np.arctan(bxa * alpha_s))))
+        / g_xao
+    )
+    return g_xa * fx0
+
+
+@dataclass(frozen=True)
+class FyCombinedCoefficients:
+    """Fitted combined-slip Fy weighting coefficients -- how a nonzero
+    longitudinal slip ratio reduces the pure-slip lateral force
+    (`Pacejka_Term_Finder_FX_V4_Redo.m`'s `CyBaseFit`/`CydFzFit`/
+    `CyIAFit` closures). A separate namespace from `FyCoefficients`, not
+    an extension of it -- `fy_combined` takes both. Several field names
+    (`Cy1`, `Hsy1`, `Hsy2`, `Vsy1..Vsy4`) repeat names already used by
+    pure-slip `FyCoefficients`; MATLAB keeps them in separate structs
+    (`ry.*` vs `p.*`) and so does this port (two distinct dataclasses),
+    so there is no actual collision despite the shared spelling.
+
+    `Hsy3` (declared in the MATLAB `ry0`/`Rystat` table, commented out
+    immediately: `% ry0.Hsy3 = 1; Rystat.Hsy3 = [0,0,1,0];`) is omitted
+    entirely -- never activated, never referenced by any formula in the
+    file, unlike every other field here.
+    """
+
+    By1: float
+    By2: float
+    By3: float
+    By4: float
+    Cy1: float
+    Ey1: float
+    Ey2: float
+    Hsy1: float
+    Hsy2: float
+    Vsy1: float
+    Vsy2: float
+    Vsy3: float
+    Vsy4: float
+    Vsy5: float
+    Vsy6: float
+
+
+def fy_combined(
+    fz, fz0_prime, gamma_star, kappa, alpha_rad,
+    pure_coeffs: FyCoefficients, comb_coeffs: FyCombinedCoefficients,
+):
+    """Combined-slip lateral force: the pure-slip `fy_pure` value (`Fy0`,
+    a scalar for one fixed-alpha condition -- combined-slip tests hold
+    alpha constant while sweeping `kappa`, the opposite of pure-slip's
+    swept-alpha tests) weighted by `G_yk`, a function of `kappa` (this
+    equation's own x-axis) via the shifted `K_s = kappa + S_Hyk`.
+
+    Unifies the term finder's three per-stage closures (`CyBaseFit.Fyc`,
+    `CydFzFit.Fyc`, `CyIAFit.Fyc`) the same way `fy_terms` unifies Fy's
+    own pure-slip stages: `gamma_star=0` and `fz=fz0_prime` (so `dfz=0`)
+    collapses this to `CyBaseFit`'s form; `fz=fz0_prime` alone (dfz=0,
+    gamma_star free) to `CyIAFit`'s form. Verified field-by-field (e.g.
+    `CyIAFit.D_yk`'s `mu_y*Fz*(Ycb(7)+YcIA(2)*gamma)*cos(atan(Ycb(8)*
+    alpha_star))` is this function's `dyk` with `Vsy1=Ycb(7)`,
+    `Vsy3=YcIA(2)`, `Vsy4=Ycb(8)`, `gamma_star=0` dropping the `dfz` term
+    since `CyIAFit` always runs at the reference load).
+
+    `mu_y`/`fy0` come from `pure_coeffs` via `fy_pure` at this call's
+    actual `(fz, gamma_star, alpha_rad)` -- the original's three stages
+    call `Pacejka_FY` with `gamma=0` explicitly for Base/dFz (which are
+    both recorded at zero camber anyway) and the real `gamma` for dIA;
+    passing this call's actual `gamma_star` reproduces both cases without
+    a special case.
+
+    **Same class of bug as `fx_combined`'s docstring, partial here
+    rather than total:** at the original's hardcoded `alpha_rad=0`,
+    `B_yk = By1*cos(atan(By2*(0-By3)))` collapses to one constant number
+    that `By1`, `By2`, `By3` jointly determine but cannot be separated
+    into individually -- a rank-deficient fit, not a crash, but the three
+    "fitted" values are an arbitrary decomposition of one number. `Vsy4`
+    (inside `D_yk`'s `cos(atan(Vsy4*alpha_rad))`) fares worse: at
+    `alpha_rad=0`, `cos(atan(0))=1` regardless of `Vsy4`, a true
+    zero-effect dead parameter, the same failure mode as quirk #11.
+    `fit_fy_combined_coefficients` (`pacejka.fitters.fy`) fits against a
+    real multi-alpha `alpha_sweep` instead, breaking both degeneracies.
+    """
+    fy0, mu_y = fy_pure(fz, fz0_prime, gamma_star, alpha_rad, pure_coeffs)
+    c = comb_coeffs
+    dfz = (fz - fz0_prime) / fz0_prime
+
+    byk = (c.By1 + c.By4 * gamma_star**2) * np.cos(np.arctan(c.By2 * (alpha_rad - c.By3)))
+    cyk = c.Cy1
+    dyk = mu_y * fz * (c.Vsy1 + c.Vsy2 * dfz + c.Vsy3 * gamma_star) * np.cos(np.arctan(c.Vsy4 * alpha_rad))
+    eyk = c.Ey1 + c.Ey2 * dfz
+    s_hyk = c.Hsy1 + c.Hsy2 * dfz
+    s_vyk = dyk * np.sin(c.Vsy5 * np.arctan(c.Vsy6 * kappa))
+    k_s = kappa + s_hyk
+
+    g_yko = np.cos(cyk * np.arctan(byk * s_hyk - eyk * (byk * s_hyk - np.arctan(byk * s_hyk))))
+    g_yk = np.cos(cyk * np.arctan(byk * k_s - eyk * (byk * k_s - np.arctan(byk * k_s)))) / g_yko
+
+    return fy0 * g_yk + s_vyk

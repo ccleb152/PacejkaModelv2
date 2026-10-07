@@ -102,8 +102,8 @@ yet ported) should be scoped when we get there:
   checked against the original MATLAB output on the same input, within a
   tolerance, before it's considered done. See "Golden testing" below and
   MIGRATION_PLAN.md §5 for the fixture format and capture workflow.
-- **Longitudinal (Fx / braking) support, Phase 2a status: pure-slip Fx is
-  ported; combined-slip Fx/Fy and Mx are not.** Confirmed with the user
+- **Longitudinal (Fx / braking) support, Phase 2 status: pure-slip Fx and
+  combined-slip Fx/Fy are ported; Mx is not.** Confirmed with the user
   (2026-10-06) to start Phase 2 scoped to pure-slip Fx only first —
   `pacejka/fitters/fx.py`'s `fit_kappa_sweep` (leaf, port of
   `Raw_Data_Fitter_Fx_V2.m`) and `fit_fx_coefficients` (port of
@@ -126,16 +126,32 @@ yet ported) should be scoped when we get there:
   matching `RawDataFiles/`'s actual subfolders) -- see
   `_CATALOG_TEST_TYPE_FOR_MODE` in that file.
 
-  **Explicitly deferred, not started:** `Pacejka_Term_Finder_FX_V4_Redo.m`'s
-  combined-slip Fx and combined-slip Fy stages (how a nonzero slip angle
-  reduces longitudinal force, and vice versa) — both are fit from data at
-  a single hardcoded `SA_vals = 0` in the original, the same degenerate
-  single-value-sweep pattern as quirks #11/#15, so they likely can't be
-  fit meaningfully without first collecting real multi-SA combined-slip
-  data (nothing in the current pipeline does this yet — see quirk #24).
-  `Raw_Data_Fitter_Mx_V2.m`/`Pacejka_Term_Finder_MX_V1.m` (overturning
-  moment) are also still unported — lowest priority per
-  MIGRATION_PLAN.md §2, and `Mx` was already disconnected from
+  **Combined-slip Fx/Fy, ported 2026-10-06 (confirmed with the user
+  2026-10-05 after direct inspection of `RawDataFiles/BrakeDrive/` found
+  real multi-slip-angle data for all three bundled tires — see quirk #24,
+  now updated, and new quirks #25/#26):**
+  `Pacejka_Term_Finder_FX_V4_Redo.m`'s combined-slip Fx stage
+  (`pacejka.model.FxCombinedCoefficients`/`fx_combined`,
+  `pacejka.fitters.fx.fit_combined_fx_coefficients`) and combined-slip Fy
+  stage (`pacejka.model.FyCombinedCoefficients`/`fy_combined`,
+  `pacejka.fitters.fy.fit_combined_fy_coefficients` — grouped by output
+  quantity into `fitters/fy.py` rather than by MATLAB source file, per
+  this file's migration-workflow convention for `model.py`), plus
+  `pacejka.detection.detect_sa_levels` (auto-detecting which nominal slip
+  angles have real combined-slip data) wired into
+  `run_longitudinal_fit`'s new `sa_noms`/`fy_pure_coeffs` parameters and
+  `combined: CombinedSlipFitResult | None` result field. Combined-slip Fy
+  needs an already-fit pure-slip `FyCoefficients` from a Cornering round
+  for the *same tire* (`pacejka.pipeline.run_cornering_fit`'s result) —
+  without one, `combined.fy` is `None` but combined-slip Fx still fits.
+  See MODEL_CHANGES.md's 2026-10-06 "Add combined-slip Fx/Fy fitting"
+  entry for the full technical writeup. **Not yet wired into the
+  Streamlit app** — `app/pages/tire_fitting.py` doesn't expose combined-
+  slip results yet; that's a deliberate follow-up, not an oversight.
+
+  **Still not started:** `Raw_Data_Fitter_Mx_V2.m`/
+  `Pacejka_Term_Finder_MX_V1.m` (overturning moment) — lowest priority
+  per MIGRATION_PLAN.md §2, and `Mx` was already disconnected from
   `tiremodelV2.m` in the original. The package layout still reserves
   `fitters/mx.py` for this.
 
@@ -434,22 +450,71 @@ correct just because they're the original:
    `px`/`dpi` term at all). `pacejka.model.FxCoefficients` omits them
    entirely rather than carrying inert fields, and `fx_pure` has no
    pressure term to match — there's nothing for one to match.
-24. **The combined-slip Fx and combined-slip Fy stages (not yet ported —
-   see CLAUDE.md's "Longitudinal (Fx / braking) support" status note)
-   are fit from data at a single hardcoded `SA_vals = 0`.** Same
-   degenerate single-value-sweep pattern as quirks #11/#15: the
-   "combined slip" weighting terms (`G_xa`, `G_yk`) are meant to capture
-   how force at one slip channel is reduced by slip in the *other*
-   channel, which needs data swept across multiple nonzero slip-angle
-   values at various slip ratios — but `SA_vals = 0` means every
-   combined-slip fit in the original runs on pure-slip-angle-zero data,
-   making at least the slip-angle-dependent shift terms (`S_Hxa` in
-   `CBaseFit`, similarly for the lateral side) unidentifiable from alpha
-   dependence the same way FY's dIA stage was unidentifiable from camber
-   dependence. Deferred as explicit future work rather than ported as a
-   literal (and likely unfixable without new data collection)
-   translation — confirmed with the user (2026-10-06) before starting
-   Phase 2, see MODEL_CHANGES.md.
+24. **The combined-slip Fx and combined-slip Fy stages are fit from data
+   at a single hardcoded `SA_vals = 0`.** Same degenerate single-value-
+   sweep pattern as quirks #11/#15: the "combined slip" weighting terms
+   (`G_xa`, `G_yk`) are meant to capture how force at one slip channel is
+   reduced by slip in the *other* channel, which needs data swept across
+   multiple nonzero slip-angle values at various slip ratios — but
+   `SA_vals = 0` means every combined-slip fit in the original runs on
+   pure-slip-angle-zero data. **Update, 2026-10-06: fixed, not deferred.**
+   Initially flagged as likely unfixable without new data collection, but
+   direct inspection of `RawDataFiles/BrakeDrive/` found real,
+   substantial, full-width SL sweeps at SA ≈ 0/-3/-6 deg across every
+   tested load *and* camber for all three bundled 18x6-10 tires (R20,
+   LCO, R25B) — richer than the original tool ever exploited. Given real
+   data exists, the user confirmed (2026-10-05) porting a full fix rather
+   than deferring further; see quirks #25/#26 for what the degeneracy
+   actually does to each channel's fit, and MODEL_CHANGES.md's 2026-10-06
+   "Add combined-slip Fx/Fy fitting" entry for the port itself
+   (`pacejka.fitters.fx.fit_combined_fx_coefficients`/`pacejka.fitters.fy.
+   fit_combined_fy_coefficients`).
+25. **Quirk #24's degeneracy is a true mathematical identity for
+   combined-slip Fx, not merely weak identification.** At `alpha=0`,
+   `Alpha_S = alpha_star + S_Hxa` reduces to exactly `S_Hxa` — the same
+   point `G_xao` (the normalizing denominator) is evaluated at — so
+   `G_xa = G_xao / G_xao = 1` identically, for *any* combination of the
+   seven combined-slip Fx coefficients (`Bx1`/`Bx2`/`Bx3`/`Cx1`/`Ex1`/
+   `Ex2`/`Hsx1`). Proved algebraically and confirmed numerically (the
+   difference between `fx_combined` and plain `fx_pure` is exactly 0.0 at
+   alpha=0 for two independently-chosen coefficient sets, and
+   substantially nonzero at alpha=-6 deg) — see
+   `tests/unit/test_fx_combined_term_finder.py`'s
+   `test_alpha_zero_degenerates_to_identity_weighting` and
+   `test_single_alpha_point_cannot_identify_base_coefficients`. Every
+   historical `lsqcurvefit` call for this stage therefore fit seven
+   coefficients that had *zero effect whatsoever* on its own objective
+   function — any existing combined-slip Fx fit from this MATLAB tool
+   should be treated with the same suspicion as quirk #7's FZ=50 finding,
+   for an even stronger reason (not weak data, literally no data). Fixed
+   in `pacejka.model.fx_combined`/`pacejka.fitters.fx.
+   fit_combined_fx_coefficients` by fitting against real nonzero-alpha
+   data (see quirk #24's update).
+26. **Combined-slip Fy's degeneracy at `alpha=0` is partial, not total —
+   unlike quirk #25's Fx case.** `By1`/`By2`/`By3` (inside `Byk = (By1 +
+   By4*gamma_star**2) * cos(atan(By2*(alpha-By3)))`) collapse into one
+   jointly-unidentifiable combination at `alpha=0` — `cos(atan(By2*(0 -
+   By3)))` is some fixed number regardless of how `By2`/`By3`
+   individually split it — but `By1` (and `By4`, which rides along with
+   it) still isn't literally dead, since the surrounding `G_yk` term
+   still varies meaningfully with the genuinely-swept `kappa`. `Vsy4`,
+   by contrast, *is* a true dead parameter here exactly like quirk #25's
+   whole Fx stage: it only ever appears inside `cos(atan(Vsy4 *
+   alpha_rad))`, which is `cos(atan(0)) == 1` at `alpha=0` regardless of
+   `Vsy4`'s value — confirmed both at the model level and the fitting
+   level in `tests/unit/test_fy_combined_term_finder.py`'s
+   `test_vsy4_has_zero_effect_at_alpha_zero`/
+   `test_single_alpha_point_cannot_identify_vsy4`. Practical
+   consequence, found while writing `tests/unit/
+   test_fy_combined_term_finder.py`: even with real multi-alpha data,
+   `By1`/`By2`/`By3`/`By4` don't individually recover to values close to
+   a synthetic ground truth (they land on a different, correlated
+   combination that still reproduces the same curve) — so don't trust an
+   individual combined-slip Fy Base-stage coefficient's value in
+   isolation, only the fitted curve as a whole, the same caution quirk #9
+   already asks for with pure-slip Fy's `Ky1`. Fixed the same way as
+   quirk #25: real nonzero-alpha data, via `pacejka.model.fy_combined`/
+   `pacejka.fitters.fy.fit_combined_fy_coefficients`.
 
 ## Migration workflow
 

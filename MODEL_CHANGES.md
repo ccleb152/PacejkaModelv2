@@ -19,6 +19,113 @@ and when.
 
 ---
 
+## 2026-10-06 -- Add combined-slip Fx/Fy fitting, fixing the SA_vals=0 degeneracy
+
+**What:** Ported the combined-slip stages of `Pacejka_Term_Finder_FX_V4_
+Redo.m` -- `CBaseFit`/`CdFzFit`/`CdIAFit`, for both the Fx-reduced-by-
+alpha channel and the Fy-reduced-by-kappa channel:
+- `pacejka.model.FxCombinedCoefficients`/`fx_combined` and
+  `FyCombinedCoefficients`/`fy_combined` -- the shared `G_xa`/`G_yk`
+  weighting equations, each applied on top of the already-fit pure-slip
+  curve (`fx_pure`/`fy_pure`).
+- `pacejka.fitters.fx.fit_combined_fx_coefficients` and
+  `pacejka.fitters.fy.fit_combined_fy_coefficients` -- the term finders,
+  using the same partial-staged hybrid (Base+dIA jointly, dFz separate)
+  already established for the pure-slip stages.
+- `pacejka.detection.detect_sa_levels` -- auto-detects which of the
+  standard nominal slip angles (0/-3/-6 deg) have real SL-swept data in
+  a Braking round, the combined-slip counterpart to `detect_fz_levels`.
+- `pacejka.longitudinal_pipeline.run_longitudinal_fit` gained `sa_noms`
+  and `fy_pure_coeffs` parameters and a new `combined` result field
+  (`CombinedSlipFitResult | None`), wiring the above into the
+  orchestration layer the same way the pure-slip Fx pipeline already
+  works. Combined-slip Fy needs a pure-slip `FyCoefficients` from a
+  Cornering round for the same tire -- without one, `combined.fy` is
+  `None` but combined-slip Fx still fits.
+
+**Why:** See CLAUDE.md quirk #24 (now updated) and new quirks #25/#26.
+The original hardcodes `SA_vals = [0]` for this entire stage. For
+combined-slip Fx this isn't just weak identification, it's an exact
+mathematical identity: at `alpha=0`, `Alpha_S = alpha_star + S_Hxa`
+reduces to exactly `S_Hxa`, the same point `G_xao` (the normalizing
+denominator) is evaluated at, so `G_xa = G_xao/G_xao = 1` identically --
+proved algebraically and confirmed numerically (diff exactly 0.0 at
+alpha=0, substantial and nonzero at alpha=-6 deg) -- meaning every
+historical `lsqcurvefit` call for this stage fit seven coefficients that
+had *zero effect* on its own objective function, not just a
+poorly-conditioned one. Combined-slip Fy's degeneracy at alpha=0 is only
+partial: `By1`/`By2`/`By3` collapse into one jointly-unidentifiable
+combination (`cos(atan(By2*(0-By3)))` is a fixed number regardless of
+how `By2`/`By3` individually split it), and `Vsy4` is a true dead
+parameter (`cos(atan(Vsy4*0))==1` regardless of `Vsy4`), but the overall
+curve isn't degenerate since `G_yk` still varies with the genuinely
+swept `kappa`.
+
+Fixing this for real needs genuine data at multiple nonzero slip
+angles, which the original's own `SweepVars.SA=[0]` hardcoding
+discarded. Direct inspection of `RawDataFiles/BrakeDrive/` confirmed all
+three bundled 18x6-10 tires (R20, LCO, R25B) actually have this: full,
+substantial SL sweeps at SA ~ 0/-3/-6 deg across every tested load *and*
+camber -- a richer 3-way Fz x IA x SA test matrix than the original tool
+ever exploited. Given real data exists, the user decided (2026-10-05) to
+port a full, data-driven fix rather than defer this stage further.
+
+The pipeline-layer data shape needed is more involved than the pure-slip
+stages: `fit_combined_fx_coefficients`/`fit_combined_fy_coefficients`'s
+dFz and dIA stages must be fit against a **nonzero** reference slip
+angle (any alpha=0 data would reproduce the same degeneracy for Fx, and
+re-introduce the By1/By2/By3 collapse for Fy's dIA stage) -- so
+`run_longitudinal_fit` builds a second load sweep and camber sweep at
+the smallest-magnitude tested nonzero slip angle, distinct from the
+pure-slip stages' own zero-SA load/camber sweeps, rather than reusing
+them.
+
+**Verified with:** Full suite now **147 passed** (10 new tests:
+`tests/unit/test_fx_combined_term_finder.py`,
+`tests/unit/test_fy_combined_term_finder.py` -- fit quality against
+synthetic data per CLAUDE.md quirk #18, plus direct regression tests for
+the `G_xa==1` identity and the `Vsy4` dead-parameter identity).
+Real-data check against all three 18x6-10 tires (R20, LCO, R25B, each
+loaded via `load_combined_round` across every cataloged run, paired with
+that tire's own Cornering-round `fy_pure_coeffs`): `run_longitudinal_fit`
+auto-detects the same full SA matrix (0/-3/-6 deg) and `reference_sa_nom`
+(-3 deg) at every tire. Combined-slip **Fx** fits well across the board
+(R^2 0.92-0.999 at every alpha/load/camber condition, all three tires).
+Combined-slip **Fy** quality varies sharply by tire -- R25B: R^2
+0.18-0.99 (only the thinnest Fz=50 lbf condition dips, same pattern the
+pure-slip R20 entry below shows for a different channel); LCO: R^2
+0.54-0.81 (consistently mediocre but not broken); **R20: R^2 ranges from
+-7.13 (Fz=50 lbf) to 0.32 at the reference load/camber** -- several
+conditions fit *worse than a flat line at the mean*. This is the "Known
+limitation" below materializing on real data, not a new bug -- see there
+for why and what to check.
+
+**Known limitation, not fixed here:** the combined-slip Fy Base-stage
+coefficients (`By1`/`By2`/`By3`/`By4`, correlated through the joint
+collapse above, plus `Cy1`/`Ey1` riding along in the same joint fit) can
+land in a visibly worse local optimum than the committed all-ones `p0`
+when the true coefficients are far from 1.0 -- an inherent risk of
+nonlinear least-squares from a generic starting point (the same risk the
+original MATLAB `nlinfit` call would have from the same p0), not a port
+defect. First flagged from development-time synthetic fits; confirmed
+materializing on real data by the R20 numbers just above (its fitted
+`Ey1` and `Vsy5` both landed pinned at their permissive bounds, `Cy1`
+went negative -- all signs of a bad local optimum, not a measurement
+problem). Real fits against actual tire data should have their
+combined-slip Base-stage coefficients sanity-checked before being
+trusted, the same caution CLAUDE.md quirk #9 already flags for pure-slip
+Fy's `Ky1` -- R20's combined-slip Fy fit specifically should not be used
+as-is. A real fix (better `p0` from domain knowledge, or a multi-start/
+global optimizer) is follow-up work, not done here per the
+no-unilateral-fix convention -- flagged for the team rather than guessed
+at.
+
+**Not changed:** pure-slip Fx/Fy/Mz fitting, or anything in the app/UI
+layer (combined-slip results aren't wired into Streamlit yet -- a
+follow-up task).
+
+---
+
 ## 2026-10-06 -- Fix the R20 Fz=50/100 fit-quality gap flagged in the Fx entry below
 
 **What:** Follow-up to the open item in the entry below (R20 18x6-10's
