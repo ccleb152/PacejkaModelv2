@@ -536,6 +536,30 @@ correct just because they're the original:
    as quirk #9's `Ky1` widening: a permissive, uncommitted bracket, not a
    domain-validated final choice; re-fit coefficients should be
    sanity-checked, not assumed correct from a single run.
+28. **`Pacejka_Term_Finder_FX_V4_Redo.m`'s Base-stage `Dx1` (peak
+   longitudinal friction coefficient) had the same class of
+   too-narrow-for-cross-tire-use bound as quirk #27's `Dy1`, just a
+   tight bracket rather than a full pin.** The MATLAB source's own
+   `(2.5, 3.0)` bound (already "Increased limits" per that file's own
+   comment, i.e. a previously-widened bracket, not the original-
+   original one) clipped real R20 data at both its 18x6 and 20.5x7-13in
+   sizes to exactly `Dx1=2.5` (confirmed to floating-point precision --
+   not a coincidence). Widening the bound to `(1.0, 4.0)` as a
+   diagnostic showed the true optimum is ~2.27-2.32 for both R20 sizes,
+   a real ~8-10% difference. **Fixed, 2026-10-20:** widened to the same
+   permissive `(1.5, 4.0)` bracket as `Dy1`'s fix, in
+   `pacejka/fitters/fx.py`'s `_BASE_BOUNDS`. Same flagging caveat as
+   quirks #9/#27: permissive and uncommitted, not domain-validated.
+   Separately (not this quirk, but found while verifying the fix): R20's
+   20.5x7-13in dFz stage lands in a visibly worse local optimum from the
+   committed `p0.Dx2=-1.75` than the other three Fx-fitted tires
+   (`Dx2` landing at -2.8 instead of the -0.01 to -0.2 range the others
+   converge to) -- confirmed fixable by starting from a `p0` closer to
+   those tires' own fitted values, the same generic-`p0`-sensitivity
+   risk quirk #18 and the combined-slip Fy Base-stage finding already
+   document, not a new bug. Not fixed in the shared `_P0` constant
+   (that would bias every future fit toward this one tire); flagged for
+   the team, same as those precedents.
 
 ## Migration workflow
 

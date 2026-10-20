@@ -19,6 +19,50 @@ and when.
 
 ---
 
+## 2026-10-20 -- Widen Fx's Dx1 bound, same class of issue as Dy1
+
+**What:** Widened `Dx1` (peak longitudinal friction coefficient) in
+`pacejka.fitters.fx`'s `_BASE_BOUNDS` from the MATLAB-sourced `(2.5,
+3.0)` bracket to a permissive `(1.5, 4.0)` -- see CLAUDE.md quirk #28.
+Found immediately after the `Dy1` fix below, while fitting pure-slip Fx
+for the four tire/sizes with real BrakeDrive data (R20/R25B at
+18x6/20.5x7-13in) as part of the same size-scaling study.
+
+**Why:** Both R20 sizes' fitted `Dx1` landed exactly on the old bound's
+`2.5` floor (to floating-point precision). Widening the bound as a
+diagnostic showed the true optimum is ~2.27-2.32 -- a real difference,
+not noise. Unlike `Dy1` (a full zero-width pin, so *every* tire was
+affected identically), this was a tight-but-nonzero bound, so only the
+tires whose true peak mu_x happened to fall near or past 2.5 actually
+hit it -- R25B's two Fx-fitted sizes already landed at 2.508/2.700, safely
+interior, which is why this wasn't caught until R20-specific data
+exposed it.
+
+A second, separate issue surfaced while verifying the widened bound:
+R20's 20.5x7-13in dFz stage converged to a visibly worse fit (R^2 as
+low as 0.29 at one load) than its 18x6 sibling, with `Dx2` landing at
+-2.8 instead of the -0.01 to -0.2 other tires converge to. Confirmed
+via diagnostic (not fixed in the shared `_P0`): re-running with `p0.
+Dx2` set near the other tires' own fitted value (-0.2 instead of the
+committed -1.75) recovers a near-perfect fit (R^2 >= 0.95 everywhere,
+`Dx2` landing at -0.003). This is the same generic-`p0`-sensitivity
+risk already documented for quirk #18 and the combined-slip Fy
+Base-stage finding -- flagged, not patched into the shared constant,
+since doing so would bias every future fit toward this one tire's
+data rather than fix the underlying generic-starting-point fragility.
+
+**Verified with:** Full suite still **149 passed** (no test assumed an
+exact `Dx1` value, unlike `Dy1`'s zero-width-pin test, so none needed
+updating). Re-fit all four Fx-capable tire/sizes: R20 18x6 now
+R^2>=0.95 everywhere (`Dx1=2.320`); R25B's two sizes unchanged
+(`Dx1=2.508`/`2.700`, both already interior); R20 20.5x7 needed the
+`p0.Dx2` diagnostic override above to reach R^2>=0.95 -- used for this
+analysis, not committed to the source.
+
+**Not changed:** `_P0`'s committed `Dx2` value, or any other Fx bound.
+
+---
+
 ## 2026-10-20 -- Unpin Fy's Dy1, and fix detect_camber_levels's missing sweep-range check
 
 **What:** Two fixes found while fitting pure-slip Fy coefficients across

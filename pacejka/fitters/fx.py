@@ -217,13 +217,24 @@ _P0 = dict(
 #     unilateral "fix" -- flagged for the team to re-derive Ex4's correct
 #     p0/bounds from a real fit, not treated as validated.
 #
+# Dx1 (peak longitudinal friction coefficient, the dominant term in
+# mu_x) was tightened here too -- see CLAUDE.md quirk #28: real R20 data
+# (18x6 and 20.5x7-13in) landed exactly on the (2.5, 3.0) lower bound,
+# and widening it to (1.0, 4.0) as a diagnostic showed the true optimum
+# is ~2.27-2.32, a real ~8-10% difference, not floating-point noise.
+# Widened to a permissive (1.5, 4.0) bracket (same magnitude as FY's own
+# Dy1 fix, quirk #27) so Dx1 is no longer silently clipped for tires
+# whose true peak mu_x falls outside the original MATLAB bracket.
+# Flagged the same way as every other widened bound here: permissive
+# and uncommitted, not domain-validated.
+#
 # As of the partial-staged fit below, fit *jointly* with the dIA field --
 # see `fit_fx_coefficients` -- so "Base stage" is no longer a separate
 # optimization pass, just the name for this field group.
 _BASE_FIELDS = ("Cx1", "Dx1", "Ex1", "Ex4", "Kx1", "Hsx1", "Vsx1")
 _BASE_BOUNDS = (
     (1.2, 2.2),
-    (2.5, 3.0),
+    (1.5, 4.0),
     (-0.6, 0.2),
     (-0.1, 0.1),
     (0.0, 600.0),
