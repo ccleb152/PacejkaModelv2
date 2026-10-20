@@ -35,7 +35,12 @@ special-case which round used which convention.
 The compound token itself also isn't labeled consistently: Round 6 calls
 one compound "LCO C2000" while Round 8 calls the same physical compound
 just "LCO" (confirmed by the team -- not a guess, see CLAUDE.md quirk
-#19). `_COMPOUND_ALIASES` normalizes known cases like this to one
+#19). Round 6's 20.5x7-13 R25B tire has the same pattern with its own
+batch code -- "R25B A2500" (also confirmed by the team) -- while the
+same round's 20.5x7-13 R20 tire has no such suffix at all ("Hoosier
+43164 20.5x7.0-13 R20, 7 inch rim", Rounds 8/9's item-first format,
+despite being a Round 6/9 file -- the two formats aren't strictly
+per-round). `_COMPOUND_ALIASES` normalizes known cases like this to one
 canonical label so the catalog doesn't show the same compound twice; it's
 a small, explicit, confirmed mapping rather than a general "strip the
 trailing code word" heuristic, since a future round's second token might
@@ -62,6 +67,7 @@ _METADATA_VARS = ("source", "testid", "tireid", "RUN")
 # compound. See CLAUDE.md quirk #19.
 _COMPOUND_ALIASES = {
     "LCO C2000": "LCO",
+    "R25B A2500": "R25B",
 }
 
 # "<mfr> <item> <d1>x<d2>-<wheel> <compound>, <rim>" -- Rounds 8/9's
