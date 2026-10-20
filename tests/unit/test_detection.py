@@ -85,6 +85,27 @@ def test_min_samples_filters_out_transient_noise(synthetic_round):
     assert detected == [0.0, 2.0, 4.0]
 
 
+def test_camber_excludes_a_detected_level_whose_sa_sweep_is_too_narrow():
+    # Regression test: a candidate IA cluster can clear min_samples while
+    # its SA range is nowhere near a real sweep -- confirmed against real
+    # Round 6/9 20.5x6/7-13 R20/R25B data, where a drive/brake session's
+    # Cornering-shaped check sweep ramped camber continuously through
+    # +/-5 deg *while* sweeping SA, leaving behind narrow IA clusters
+    # (e.g. 16 samples spanning only 0.5 deg of SA) that a plain
+    # min_samples check alone would have reported as a real camber
+    # level. See pacejka.quality.MIN_SA_SWEEP_RANGE_DEG and
+    # MODEL_CHANGES.md.
+    rng = np.random.RandomState(4)
+    real_sweep = _condition_block(rng, 150.0, 0.0)
+    narrow_sa = np.linspace(-1.0, 1.0, 60)
+    transient = _condition_block(rng, 150.0, 3.0, n=60)
+    transient = transient.assign(SA=narrow_sa)
+    samples = pd.concat([real_sweep, transient], ignore_index=True)
+
+    detected = detect_camber_levels(samples, fz_nom=150.0, p_nom=12, v_nom=25)
+    assert detected == [0.0]
+
+
 def _braking_block(rng, fz_nom, sl_min=-0.15, sl_max=0.13, n=150, sa_nom=0.0):
     sl = np.linspace(sl_min, sl_max, n)
     return pd.DataFrame(

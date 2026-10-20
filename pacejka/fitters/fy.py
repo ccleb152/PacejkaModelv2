@@ -164,10 +164,23 @@ _P0 = dict(
 # initial guess to -50 and fit a physically-backwards (negative-stiffness)
 # curve. Widened here to a permissive, uncommitted [0, 1000] bracket that
 # contains the initial guess with the correct sign -- flagged as needing
-# real domain-informed re-tuning, not a validated final choice. Dy1's
-# bounds (2.784, 2.784) are a zero-width, evidently intentional fix of
-# mu_y to a known value; its mismatched p0 (2.625) is inert since the
-# fixed bound overrides it regardless.
+# real domain-informed re-tuning, not a validated final choice.
+#
+# Dy1 (peak mu_y) was originally pinned to a zero-width (2.784, 2.784)
+# bound -- a MATLAB-era "fix mu_y to a known value" choice (its mismatched
+# p0 of 2.625 was inert, overridden by the fixed bound regardless) -- see
+# CLAUDE.md quirk #27. That's wrong for any cross-tire comparison: it
+# forced every tire's fitted peak lateral friction coefficient to be
+# bit-for-bit identical, regardless of compound or size, which silently
+# broke a tire-size scaling study built on these coefficients before the
+# study could even start (confirmed: re-fitting all nine R20/R25B
+# 16/18/20.5in sizes with the pin in place returned Dy1=2.784 exactly,
+# every time). Unpinned here to a permissive (1.5, 4.0) bracket --
+# centered loosely around the original p0/pinned values and the same
+# magnitude as pacejka.fitters.fx's own Dx1 (peak mu_x) bounds of
+# (2.5, 3.0) -- so Dy1 is now fit like every other coefficient. Flagged
+# the same way as Ky1 above: a permissive, uncommitted bracket, not a
+# domain-validated final choice.
 #
 # As of the partial-staged fit below, these are fit *jointly* with the
 # dIA fields -- see `fit_fy_coefficients` -- so "Base stage" is no longer
@@ -175,7 +188,7 @@ _P0 = dict(
 _BASE_FIELDS = ("Cy1", "Dy1", "Ey1", "Ey3", "Hsy1", "Ky1", "Ky2", "Ky4", "Vsy1")
 _BASE_BOUNDS = (
     (1.5, 1.7),
-    (2.784, 2.784),
+    (1.5, 4.0),
     (-15.0, 15.0),
     (-10.0, 25.0),
     (-0.01, 0.001),

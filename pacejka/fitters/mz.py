@@ -173,8 +173,8 @@ _MZ_P0 = dict(
 # partial-staged fit below, these are fit *jointly* with the dIA fields
 # -- see `fit_mz_coefficients` -- so "Base stage" is no longer a separate
 # optimization pass, just the name for this field group. Bz4's bounds
-# (20.0, 20.0) are a deliberate zero-width fix (same mechanism as the FY
-# term finder's Dy1 -- see pacejka.fitting.split_fixed_fields), not a
+# (20.0, 20.0) are a deliberate zero-width fix (same mechanism as the FX
+# dFz stage's Ex3 -- see pacejka.fitting.split_fixed_fields), not a
 # typo.
 #
 # Hz1 pegs exactly at this (-0.01, 0.01) bound on real R20 16x7.5 TTC

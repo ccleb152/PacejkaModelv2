@@ -515,6 +515,27 @@ correct just because they're the original:
    already asks for with pure-slip Fy's `Ky1`. Fixed the same way as
    quirk #25: real nonzero-alpha data, via `pacejka.model.fy_combined`/
    `pacejka.fitters.fy.fit_combined_fy_coefficients`.
+27. **`Pacejka_Term_Finder_FY_V3.m`'s Base-stage `Dy1` (peak lateral
+   friction coefficient, the dominant term in `mu_y = Dy1 + Dy2*dfz +
+   ...`) was pinned to a zero-width `(2.784, 2.784)` bound, straight out
+   of the MATLAB source's `lbb`/`ubb` arrays — the same "fix mu_y to a
+   known value" pattern the source applies, not a port-introduced bug.
+   That's fine for reproducing one specific historical tire's fit, but
+   it silently forces *every* tire fit through this port to come out
+   with bit-for-bit identical peak lateral grip, regardless of compound
+   or size — confirmed real, not theoretical: re-fitting nine real
+   R20/R25B tires (16"/18"/20.5", two compounds) with the pin in place
+   returned `Dy1=2.784` exactly, every single time, which would have
+   silently invalidated any cross-tire comparison built on these
+   coefficients (discovered while starting the tire-size longitudinal-
+   scaling study — see MODEL_CHANGES.md). **Fixed, 2026-10-20:**
+   unpinned to a permissive `(1.5, 4.0)` bracket in
+   `pacejka/fitters/fy.py`'s `_BASE_BOUNDS` — the same magnitude as
+   `pacejka.fitters.fx`'s own `Dx1` (peak mu_x) bounds of `(2.5, 3.0)` —
+   so `Dy1` is now fit like every other coefficient. Flagged the same way
+   as quirk #9's `Ky1` widening: a permissive, uncommitted bracket, not a
+   domain-validated final choice; re-fit coefficients should be
+   sanity-checked, not assumed correct from a single run.
 
 ## Migration workflow
 

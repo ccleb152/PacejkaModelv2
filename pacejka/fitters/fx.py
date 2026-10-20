@@ -248,7 +248,7 @@ _BASE_BOUNDS = (
 # loss, matching Mz's treatment.
 #
 # `Ex3`'s bound (0.0, 0.0) is a deliberate zero-width pin (same mechanism
-# as FY's Dy1/Mz's Bz4), overriding its mismatched p0=-0.4 -- not fit.
+# as Mz's Bz4), overriding its mismatched p0=-0.4 -- not fit.
 _DFZ_FIELDS = ("Dx2", "Ex2", "Ex3", "Kx2", "Kx3", "Hsx2", "Vsx2")
 _DFZ_BOUNDS = (
     (-50.0, 0.0),

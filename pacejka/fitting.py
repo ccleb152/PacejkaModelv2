@@ -25,8 +25,8 @@ def split_fixed_fields(field_names, bounds, current_values):
     `scipy.optimize.least_squares` requires a *strictly* increasing
     `[lb, ub]` per parameter and raises otherwise; MATLAB's `lsqcurvefit`
     happily accepts `lb == ub` and treats that parameter as pinned to that
-    value for the whole fit (e.g. the FY term finder's `Dy1`, fixed to a
-    known mu_y regardless of its stale p0 initial guess). Returns
+    value for the whole fit (e.g. the FX dFz stage's `Ex3`, pinned to 0.0
+    regardless of its stale p0 initial guess). Returns
     `(free_fields, free_bounds, fixed_updates)`.
     """
     free_fields, free_bounds = [], []

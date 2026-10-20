@@ -86,13 +86,42 @@ def test_ky1_comes_out_positive_not_the_original_wrong_sign_bound(synthetic_data
     assert result.coefficients.Ky1 > 0
 
 
-def test_dy1_is_fixed_to_the_bound_value_not_the_stale_p0_guess(synthetic_dataset):
-    # Dy1's bounds are (2.784, 2.784) -- a deliberate zero-width fix,
-    # distinct from p0.Dy1=2.625 (see pacejka/fitters/fy.py's _BASE_BOUNDS
-    # comment). Confirms _split_fixed_fields handles it correctly.
+def test_dy1_is_fit_from_data_not_pinned_to_a_constant(synthetic_dataset):
+    # Regression test for CLAUDE.md quirk #27: Dy1 (peak mu_y) used to be
+    # pinned to a zero-width (2.784, 2.784) bound, forcing every tire's
+    # fitted peak lateral friction coefficient to come out bit-for-bit
+    # identical regardless of compound or size -- confirmed broken for a
+    # real cross-tire-size scaling study, not just a theoretical concern
+    # (re-fitting nine real R20/R25B tire sizes all returned exactly
+    # 2.784 with the old pin in place). Now unpinned to a permissive
+    # (1.5, 4.0) bracket, so it should recover close to this fixture's
+    # true value rather than being forced to the old constant.
     base, load_sweep, camber_sweep = synthetic_dataset
     result = fit_fy_coefficients(base, load_sweep, camber_sweep)
-    assert result.coefficients.Dy1 == 2.784
+    assert result.coefficients.Dy1 == pytest.approx(TRUE_COEFFS.Dy1, abs=0.05)
+
+
+def test_dy1_tracks_a_different_true_value_not_a_fixed_constant(synthetic_dataset):
+    # Direct proof Dy1 is no longer structurally pinned: refit against a
+    # fixture built from a *different* true Dy1 and confirm the result
+    # moves to track it, rather than landing on the old 2.784 constant
+    # (or any other fixed value) regardless of the data.
+    rng = np.random.RandomState(1)
+    other_true = FyCoefficients(**{**TRUE_COEFFS.__dict__, "Dy1": 2.1})
+
+    def _make_point_other_truth(rng, fz_lbf, ia_deg):
+        fz_n = fz_lbf * LBF_TO_N
+        gamma_star = np.sin(np.radians(ia_deg))
+        fyo, _ = fy_pure(fz_n, FZ0_PRIME, gamma_star, ALPHA_RAD, other_true)
+        noisy = fyo + rng.normal(scale=NOISE_SCALE, size=fyo.shape)
+        return FySweepPoint(fz_n=fz_n, gamma_star=gamma_star, alpha_rad=ALPHA_RAD, fy_n=noisy)
+
+    other_base = _make_point_other_truth(rng, 150, 0)
+    other_load_sweep = [_make_point_other_truth(rng, fz, 0) for fz in (50, 100, 150, 200, 250)]
+    other_camber_sweep = [_make_point_other_truth(rng, 150, ia) for ia in (0, 2, 4)]
+
+    result = fit_fy_coefficients(other_base, other_load_sweep, other_camber_sweep)
+    assert result.coefficients.Dy1 == pytest.approx(2.1, abs=0.05)
 
 
 def test_cross_term_coefficients_are_always_zero_not_fit(synthetic_dataset):

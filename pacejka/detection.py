@@ -21,7 +21,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from pacejka.quality import MIN_SL_SWEEP_RANGE
+from pacejka.quality import MIN_SA_SWEEP_RANGE_DEG, MIN_SL_SWEEP_RANGE
 from pacejka.segmenting import segment_condition
 
 # The nominal loads (lbf) ParaRange.m's Cornering branch has acceptance
@@ -188,6 +188,20 @@ def detect_camber_levels(
     `pacejka.longitudinal_pipeline` will actually use, so a level that
     wouldn't survive that downstream check is never reported as detected
     in the first place.
+
+    A candidate also needs a real sweep of the test's own independent
+    variable (SA for Cornering, SL for Braking) at that camber level, the
+    same robustness check `detect_fz_levels`/`detect_sa_levels` already
+    apply to their own candidates -- `min_samples` alone isn't enough.
+    Found on real Round 6/9 20.5x6/7-13 R20/R25B data: a drive/brake
+    session's own Cornering-shaped check sweep (SL~=0, but camber ramped
+    continuously through +/-5 deg *while* SA was swept, a different
+    protocol than the dedicated Cornering runs' fixed-camber-dwell SA
+    sweeps) left behind narrow IA clusters -- e.g. a 16-sample "IA=-3
+    deg" cluster whose SA range was only 0.5 deg wide, nowhere near a
+    real sweep -- that cleared `min_samples` but would have fed pure
+    transient/ramp data into the dIA fit stage as if it were a real
+    camber condition. See MODEL_CHANGES.md.
     """
     segment = segment_condition(
         samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=math.nan, sa_nom=0.0, v_nom=v_nom, test_type=test_type
@@ -199,11 +213,18 @@ def detect_camber_levels(
     values, counts = np.unique(rounded, return_counts=True)
     candidates = [float(v) for v, c in zip(values, counts) if c >= min_samples]
 
+    swept_channel = "SL" if test_type == "Braking" else "SA"
+    min_sweep_range = MIN_SL_SWEEP_RANGE if test_type == "Braking" else MIN_SA_SWEEP_RANGE_DEG
+
     detected = []
     for ia_nom in candidates:
         real_segment = segment_condition(
             samples, fz_nom=fz_nom, p_nom=p_nom, ia_nom=ia_nom, sa_nom=0.0, v_nom=v_nom, test_type=test_type
         )
-        if len(real_segment) >= min_samples:
-            detected.append(ia_nom)
+        if len(real_segment) < min_samples:
+            continue
+        swept = real_segment[swept_channel]
+        if float(swept.max() - swept.min()) < min_sweep_range:
+            continue
+        detected.append(ia_nom)
     return sorted(detected)

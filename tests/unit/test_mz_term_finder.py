@@ -108,7 +108,7 @@ def test_fitted_curve_is_in_the_right_ballpark_at_every_condition(synthetic_data
 
 def test_bz4_is_fixed_to_the_bound_value(synthetic_dataset):
     # Bz4's bounds are (20.0, 20.0) -- a deliberate zero-width fix, same
-    # mechanism as the FY term finder's Dy1. Confirms split_fixed_fields
+    # mechanism as the FX dFz stage's Ex3. Confirms split_fixed_fields
     # is applied here too.
     base, load_sweep, camber_sweep = synthetic_dataset
     result = fit_mz_coefficients(base, load_sweep, camber_sweep, FY_COEFFS, ro=RO)

@@ -19,6 +19,77 @@ and when.
 
 ---
 
+## 2026-10-20 -- Unpin Fy's Dy1, and fix detect_camber_levels's missing sweep-range check
+
+**What:** Two fixes found while fitting pure-slip Fy coefficients across
+all nine available R20/R25B tire sizes (16"/18"/20.5", two widths at
+16" and 20.5") in preparation for a longitudinal-data size-scaling
+study:
+
+- Unpinned `Dy1` (peak lateral friction coefficient) in
+  `pacejka.fitters.fy`'s `_BASE_BOUNDS` from a zero-width `(2.784,
+  2.784)` MATLAB-sourced bound to a permissive `(1.5, 4.0)` bracket --
+  see CLAUDE.md quirk #27.
+- `pacejka.detection.detect_camber_levels` gained the same
+  min-sweep-range robustness check `detect_fz_levels`/`detect_sa_levels`
+  already have (checking `min_samples` alone isn't enough -- a
+  candidate's actual swept-channel range, SA for Cornering/SL for
+  Braking, must clear `pacejka.quality.MIN_SA_SWEEP_RANGE_DEG`/
+  `MIN_SL_SWEEP_RANGE` too).
+
+**Why:** Re-fitting all nine sizes with `Dy1` pinned confirmed the
+quirk #27 finding was real, not theoretical: every single tire returned
+`Dy1=2.784` exactly, which would have silently invalidated any
+cross-tire-size comparison of peak lateral grip before the scaling
+study could even start.
+
+Separately, two of the nine sizes (R20 and R25B's newly-added
+20.5x7-13in tires) fit badly once `Dy1` was freed (R20: R^2 as low as
+-0.70 at one camber condition; R25B: R^2 as low as -22.8). Root cause
+confirmed by direct inspection, not guessed: these two tires' Cornering
+data includes two files each (`A1654run54`/`57` for R25B, `A2356run50`/
+`53` for R20) that record a *continuous* camber ramp (+/-5 deg) swept
+*simultaneously* with SA, a different test protocol than the rest of
+each tire's Cornering runs (which hold camber at fixed dwells -- 0/2/4
+deg -- while sweeping SA). `detect_camber_levels`'s coarse IA-rounding
+bucket picked up narrow, mostly-noise fragments from this ramp (e.g. a
+16-sample "IA=-3 deg" cluster whose SA range was only 0.5 deg wide) as
+if they were real additional camber conditions, feeding transient data
+into the joint Base+dIA fit stage. Confirmed by elimination: manually
+restricting `ia_degs` to just the real `[0, 2]` levels fixed R20
+completely (R^2 0.91-0.99) and mostly fixed R25B; the min-sweep-range
+check now excludes these fragments automatically, the same way the
+existing `detect_fz_levels`/`detect_sa_levels` checks already exclude
+analogous narrow-range false positives on other channels.
+
+A third, independent issue surfaced during the same investigation: at
+both tires' default (middle-of-detected-loads) reference load of
+Fz=200 lbf, the `IA=0` condition itself is a thin fragment (R25B: 238
+samples vs. 5,000-35,000 at every other load) -- the same class of
+sparse-condition issue already documented for these tires' BrakeDrive
+rounds (see the entry below). Not a code bug to fix generically (no
+single reference load is "correct" across every future round); worked
+around here by passing `reference_fz_nom=150.0` explicitly for both
+tires' Cornering fits, the same way the BrakeDrive entry below already
+does for their longitudinal fits.
+
+**Verified with:** Full suite now **148 passed** (one new test,
+`test_dy1_tracks_a_different_true_value_not_a_fixed_constant`, plus
+`test_dy1_is_fixed_to_the_bound_value_not_the_stale_p0_guess` rewritten
+to check approximate recovery instead of exact pin equality). Re-fit
+all nine R20/R25B sizes with both fixes and `reference_fz_nom=150.0`
+for the two 20.5x7in tires: every size now fits at R^2 >= 0.97 across
+every load/camber condition except R25B 20.5x7's own known-sparse
+Fz=200 point (R^2=-0.24 there alone; mean R^2=0.857 for that tire,
+0.997-1.000 for the other eight). Fitted `Dy1` now ranges 2.39-2.68
+across all nine sizes -- a real, physically plausible spread, not the
+old constant.
+
+**Not changed:** pure-slip Mz, Fx, or any combined-slip fitting; no
+other `_BASE_BOUNDS` field.
+
+---
+
 ## 2026-10-06 -- Add combined-slip Fx/Fy fitting, fixing the SA_vals=0 degeneracy
 
 **What:** Ported the combined-slip stages of `Pacejka_Term_Finder_FX_V4_
